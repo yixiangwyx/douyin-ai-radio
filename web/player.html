@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI电台 · 播放页</title>
+<style>
+  body { font-family: system-ui, "PingFang SC", sans-serif; background:#101418; color:#e8eaed; margin:0; padding:16px; }
+  h2 { font-size:18px; margin:8px 0 16px; }
+  #log div { padding:8px 10px; margin:6px 0; border-radius:8px; background:#1c2228; font-size:15px; line-height:1.5; }
+  #log div.interrupt { background:#1f3a2a; border:1px solid #2f6b45; }
+  #log div.mark { background:#33291c; border:1px solid #6b5a2f; }
+  #status { font-size:13px; color:#8b949e; margin-bottom:12px; }
+  button { background:#2563eb; color:#fff; border:0; border-radius:8px; padding:10px 18px; font-size:15px; }
+</style>
+</head>
+<body>
+<h2>AI电台播放页（音频自动连播 → 扬声器外放进直播间）</h2>
+<div id="status">等待音频块…</div>
+<button onclick="start()">开始连续播放</button>
+<div id="log"></div>
+<script>
+let playing = false, seen = new Set();
+async function tick() {
+  try {
+    const res = await fetch('/manifest.json?t=' + Date.now());
+    if (!res.ok) throw 0;
+    const items = await res.json();
+    document.getElementById('status').textContent =
+      '已生成 ' + items.length + ' 块 · 更新于 ' + new Date().toLocaleTimeString();
+    if (!playing) return;
+    for (const it of items) {
+      if (seen.has(it.i)) continue;
+      seen.add(it.i);
+      const row = document.createElement('div');
+      if (it.kind === 'interrupt') row.className = 'interrupt';
+      if (it.kind === 'mark') row.className = 'mark';
+      row.textContent = '[' + it.kind + '] ' + it.text;
+      document.getElementById('log').prepend(row);
+      await new Promise(r => {
+        const a = new Audio('/' + it.file);
+        a.onended = r; a.play();
+      });
+    }
+  } catch (e) {
+    document.getElementById('status').textContent = '等待音频块…';
+  }
+}
+function start() {
+  if (playing) return;
+  playing = true;
+  if (navigator.mediaSession) {} // 保持音频会话活跃
+  setInterval(tick, 1500);
+  tick();
+}
+setInterval(() => { if (!playing) tick(); }, 3000);
+</script>
+</body>
+</html>

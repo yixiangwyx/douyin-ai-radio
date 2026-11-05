@@ -1,0 +1,4 @@
+vendor/sign.js
+来源: https://github.com/saermart/DouyinLiveWebFetcher (作者 saermart, 用于学习交流)
+用途: 生成抖音 webcast websocket 连接所需的 signature。
+本仓库仅保留该文件用于协议兼容, 版权归原仓库。
