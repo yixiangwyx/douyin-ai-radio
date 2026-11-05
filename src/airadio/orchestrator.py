@@ -77,7 +77,6 @@ class Orchestrator:
         return self.tts.synth(texts)
 
     def _play_pass(self):
-        now = time.time()
         for i, seg in enumerate(self.segments):
             if seg.kind == "pause":
                 time.sleep(seg.duration_ms / 1000.0)
@@ -90,20 +89,17 @@ class Orchestrator:
                 texts = [text]
                 kind = "mark"
             audio = self._synth(texts)
-            if audio:
-                self.chunk_writer.write(kind, " ".join(texts), audio)
-            else:
-                self.chunk_writer.write(kind, " ".join(texts), b"")
+            self.chunk_writer.write(kind, " ".join(texts), audio or b"")
             self.log.append(f"[{time.strftime('%H:%M:%S')}] play[{kind}]: {' '.join(texts)}")
+            est = self._estimate_elapsed_s(texts)
+            time.sleep(min(8.0, est))  # 按播报时长节拍推进
             # 句边界：能不能插播？（看下一个边界是否受保护）
             nxt_protected = self._next_boundary_protected(i)
-            insert_text = self.scheduler.on_boundary(now + self._estimate_elapsed_s(texts),
-                                                    nxt_protected)
+            insert_text = self.scheduler.on_boundary(time.time(), nxt_protected)
             if insert_text:
                 ins_audio = self._synth([insert_text])
                 self.chunk_writer.write("interrupt", insert_text, ins_audio or b"")
                 self.log.append(f"[{time.strftime('%H:%M:%S')}] INSERT: {insert_text}")
-            time.sleep(min(3.0, self._estimate_elapsed_s(texts)))  # 模拟播报耗时（dry模式更快）
 
     def _next_boundary_protected(self, i: int) -> bool:
         for j in range(i + 1, len(self.segments)):

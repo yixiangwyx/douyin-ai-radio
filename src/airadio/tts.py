@@ -52,7 +52,7 @@ class TTSStreamer:
         self.voice = voice
         fmt = {22050: AudioFormat.MP3_22050HZ_MONO_256KBPS,
                24000: AudioFormat.MP3_24000HZ_MONO_256KBPS,
-               48000: AudioFormat.MP3_48000HZ_MONO_128KBPS}.get(
+               48000: AudioFormat.MP3_48000HZ_MONO_256KBPS}.get(
                    sample_rate, AudioFormat.MP3_24000HZ_MONO_256KBPS)
         self.fmt = fmt
         self.speech_rate = speech_rate
@@ -70,7 +70,7 @@ class TTSStreamer:
         try:
             for t in texts:
                 ss.streaming_call(t)
-            ss.streaming_complete(timeout=timeout_ms / 1000.0)
+            ss.streaming_complete(timeout_ms)
         except Exception as e:
             self.last_error = f"{type(e).__name__}: {e}"
             return b"".join(chunks)
