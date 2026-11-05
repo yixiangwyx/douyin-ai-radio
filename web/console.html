@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI电台控制台</title>
+<style>
+  :root { --bg:#0f141a; --card:#1a2129; --card2:#222b35; --tx:#e8edf2; --dim:#8a97a5;
+          --ok:#2ecc71; --warn:#f1c40f; --err:#e74c3c; --accent:#3b82f6; --int:#27ae60; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body { font-family:system-ui,"PingFang SC",sans-serif; background:var(--bg); color:var(--tx);
+         margin:0; padding:12px 12px 90px; font-size:15px; }
+  h1 { font-size:17px; margin:4px 0 12px; }
+  .card { background:var(--card); border-radius:12px; padding:12px; margin-bottom:12px; }
+  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+  .status { font-size:13px; color:var(--dim); }
+  .status b.ok{color:var(--ok)} .status b.err{color:var(--err)} .status b.warn{color:var(--warn)}
+  .stats { display:flex; gap:10px; flex-wrap:wrap; font-size:13px; color:var(--dim); margin-top:6px; }
+  .stats span b { color:var(--tx); }
+  button { background:var(--accent); color:#fff; border:0; border-radius:10px;
+           padding:11px 14px; font-size:15px; min-height:42px; }
+  button.ghost { background:var(--card2); }
+  button.warn { background:#b8860b; }
+  button.danger { background:var(--err); }
+  button:disabled { opacity:.45; }
+  textarea, input { width:100%; background:#0c1116; color:var(--tx); border:1px solid #2b3641;
+                    border-radius:8px; padding:10px; font-size:14px; font-family:inherit; }
+  textarea { min-height:180px; line-height:1.6; }
+  input { min-height:40px; }
+  label { font-size:12px; color:var(--dim); display:block; margin:8px 0 3px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .feed div { padding:7px 9px; margin:5px 0; border-radius:8px; background:var(--card2);
+              font-size:14px; line-height:1.45; word-break:break-all; }
+  .feed .e-chat{border-left:3px solid var(--accent)} .feed .e-gift{border-left:3px solid var(--int)}
+  .feed .e-follow{border-left:3px solid var(--warn)} .feed .e-member{border-left:3px solid #555}
+  .feed .e-like{border-left:3px solid #666; color:var(--dim)} .feed .e-insert{background:#123524;border:1px solid #1f6b45}
+  .tag { font-size:11px; padding:1px 6px; border-radius:6px; background:#00000055; margin-right:6px; }
+  .log div { font-size:12px; color:var(--dim); padding:2px 0; font-family:ui-monospace,monospace; }
+  details summary { cursor:pointer; color:var(--dim); font-size:14px; }
+  .hint { font-size:12px; color:var(--dim); margin-top:6px; line-height:1.5; }
+  #playBtn { position:fixed; left:12px; right:12px; bottom:10px; background:var(--int);
+             font-size:16px; box-shadow:0 4px 14px #0009; }
+</style>
+</head>
+<body>
+<h1>📻 AI电台控制台</h1>
+
+<div class="card">
+  <div class="status" id="status">连接中…</div>
+  <div class="stats" id="stats"></div>
+  <div class="row" style="margin-top:10px">
+    <button id="btnPause">暂停</button>
+    <button class="ghost" id="btnSkip">跳下一句</button>
+    <button class="ghost" id="btnRewind">从头重播</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <input id="roomInput" placeholder="切换直播间号" style="flex:1">
+    <button class="ghost" id="btnRoom">切房</button>
+  </div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">直播间实时互动</b>
+  <div class="feed" id="feed"></div>
+</div>
+
+<div class="card">
+  <div class="row" style="justify-content:space-between">
+    <b style="font-size:15px">直播稿</b>
+    <button class="ghost" id="btnLoadScript">载入当前稿</button>
+  </div>
+  <textarea id="scriptBox" placeholder="点这里载入当前稿后可编辑，或粘贴新稿"></textarea>
+  <div class="row" style="margin-top:8px">
+    <button id="btnSaveScript">保存（下一段生效）</button>
+    <button class="warn" id="btnSaveNow">保存并立即从头播</button>
+  </div>
+  <div class="hint">标记：<code>[[no interrupt]]…[[/no interrupt]]</code> 不许插断 · <code>[[pause:500]]</code> 停顿 · <code>[[待插:…]]</code> 必播话术 · <code>#</code> 段标题 · 一行不写句号=整句不可插断</div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">语音与插播参数</b>
+  <div class="grid">
+    <div><label>百炼音色（cosyvoice-v2）</label>
+      <select id="voiceSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px">
+        <option value="longxiaochun_v2">longxiaochun_v2（女·标准）</option>
+        <option value="longxiaoxia_v2">longxiaoxia_v2（女·温柔）</option>
+        <option value="longwan_v2">longwan_v2（女·知性）</option>
+        <option value="longcheng_v2">longcheng_v2（男·青年）</option>
+        <option value="longshu_v2">longshu_v2（男·播音）</option>
+        <option value="longlaotie_v2">longlaotie_v2（男·东北）</option>
+      </select>
+    </div>
+    <div><label>语速 0.5–2.0</label><input id="rateInput" type="number" step="0.1" min="0.5" max="2"></div>
+    <div><label>插播最小间隔（秒）</label><input id="minGapInput" type="number" step="5" min="5"></div>
+    <div><label>随机窗口（秒）低,高</label><input id="windowInput" placeholder="60,150"></div>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="btnParams">应用参数</button>
+    <input id="ttsTestInput" placeholder="试听文字" style="flex:1">
+    <button class="ghost" id="btnTtsTest">试听</button>
+  </div>
+  <div class="hint" id="ttsErr"></div>
+</div>
+
+<div class="card">
+  <details><summary>运行日志 / 插播记录</summary><div class="log" id="log"></div></details>
+</div>
+
+<button id="playBtn">▶ 开始连续播放（外放）</button>
+
+<script>
+let autoPlay = false, playedThrough = 0, audioQueue = [], busy = false;
+const $ = id => document.getElementById(id);
+
+async function api(path, body) {
+  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : undefined);
+  return r;
+}
+async function getState() {
+  try {
+    const r = await api('/api/state'); if (!r.ok) return;
+    const s = await r.json();
+    render(s);
+  } catch(e) { $('status').textContent = '服务连接中断，重试中…'; }
+}
+function render(s) {
+  const st = $('status');
+  const live = s.room.live && s.status.includes('connected');
+  st.innerHTML = '房间 ' + (s.room.web_rid||'-') + ' · ' + (s.room.title||'') + ' — ' +
+    (s.status.includes('connected') ? '<b class=ok>已连接</b>' :
+     s.status.includes('live:') ? '<b class=warn>连接中…</b>' :
+     s.status.includes('not_live') ? '<b class=warn>未开播(自动重试)</b>' :
+     '<b class=err>' + s.status + '</b>') +
+    (s.paused ? ' · <b class=warn>已暂停</b>' : '') +
+    (s.tts_error ? ' · <b class=err>TTS: '+s.tts_error+'</b>' : '');
+  const c = s.stats.chat||0, g = s.stats.gift||0, f = s.stats.follow||0, m = s.stats.member||0, l = s.stats.like||0;
+  $('stats').innerHTML = `<span>弹幕 <b>${c}</b></span><span>礼物 <b>${g}</b></span><span>关注 <b>${f}</b></span><span>进场 <b>${m}</b></span><span>点赞 <b>${l}</b></span><span>已插播 <b>${s.inserts}</b></span><span>稿件句数 <b>${s.segments}</b></span>`;
+  const feed = $('feed');
+  const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', interrupt:'插播'};
+  let html = '';
+  if (s.log) {
+    const ins = s.log.filter(x=>x.includes('] INSERT:')).slice(0,3);
+    for (const line of ins) html += `<div class="e-insert"><span class=tag>已插播</span>${esc(line.split('INSERT: ')[1])}</div>`;
+  }
+  for (const e of s.events) {
+    if (e.kind === 'like') { html += `<div class="e-like"><span class=tag>点赞</span>${esc(e.nick||'')}</div>`; continue; }
+    let txt = `<span class=tag>${kindName[e.kind]||e.kind}</span><b>${esc(e.nick)}</b>`;
+    if (e.kind==='chat') txt += ' ' + esc(e.content);
+    if (e.kind==='gift') txt += ' 送出 ' + esc(e.gift||'礼物') + (e.count>1?(' ×'+e.count):'');
+    const ago = Math.max(0, Math.round(Date.now()/1000 - e.t));
+    html += `<div class="e-${e.kind}">${txt} <span style="color:var(--dim);font-size:11px">${ago}s前</span></div>`;
+  }
+  feed.innerHTML = html || '<div style="color:var(--dim)">暂无互动</div>';
+  const log = $('log');
+  log.innerHTML = (s.log||[]).slice(-40).map(esc).join('<br>');
+  $('btnPause').textContent = s.paused ? '继续' : '暂停';
+  $('btnPause').className = s.paused ? '' : 'warn';
+  // 自动播放新块
+  if (autoPlay) drainAudio(s.chunks);
+}
+function esc(x){return (x||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+
+async function drainAudio(total) {
+  if (busy || playedThrough >= total) return;
+  busy = true;
+  try {
+    while (playedThrough < total) {
+      const i = playedThrough;
+      const r = await fetch('/chunks/' + String(i).padStart(4,'0') + '.mp3');
+      playedThrough++;
+      if (!r.ok) continue;
+      const blob = await r.blob();
+      await new Promise(res => { const a = new Audio(URL.createObjectURL(blob)); a.onended=res; a.onerror=res; a.play(); });
+    }
+  } finally { busy = false; }
+}
+
+$('playBtn').onclick = async () => {
+  autoPlay = !autoPlay;
+  $('playBtn').textContent = autoPlay ? '⏸ 停止自动播放' : '▶ 开始连续播放（外放）';
+  if (autoPlay) { const s = await (await api('/api/state')).json(); playedThrough = s.chunks; render(s); }
+};
+$('btnPause').onclick = async () => { const s=await(await api('/api/state')).json(); await api('/api/control',{action: s.paused?'resume':'pause'}); getState(); };
+$('btnSkip').onclick = async () => { await api('/api/control',{action:'skip'}); getState(); };
+$('btnRewind').onclick = async () => { await api('/api/control',{action:'rewind'}); getState(); };
+$('btnRoom').onclick = async () => { const v=$('roomInput').value.trim(); if(v){ await api('/api/room',{room:v}); $('roomInput').value=''; getState(); } };
+$('btnLoadScript').onclick = async () => { const r=await api('/api/script'); const d=await r.json(); $('scriptBox').value=d.text; };
+$('btnSaveScript').onclick = async () => { const r=await api('/api/script',{text:$('scriptBox').value,apply_now:false}); const d=await r.json(); alert(d.ok?('已保存，共 '+d.sentences+' 句，下一段生效'):d.error); };
+$('btnSaveNow').onclick = async () => { const r=await api('/api/script',{text:$('scriptBox').value,apply_now:true}); const d=await r.json(); alert(d.ok?('已生效，共 '+d.sentences+' 句，从头播放'):d.error); getState(); };
+$('btnParams').onclick = async () => {
+  const w = $('windowInput').value.split(',').map(x=>parseFloat(x));
+  await api('/api/params', {voice: $('voiceSel').value, rate: parseFloat($('rateInput').value),
+    min_gap: parseFloat($('minGapInput').value),
+    window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined});
+  getState();
+};
+$('btnTtsTest').onclick = async () => {
+  const text = $('ttsTestInput').value.trim(); if (!text) return;
+  $('ttsErr').textContent = '合成中…';
+  const r = await api('/api/tts_test', {text});
+  if (r.ok) { const blob=await r.blob(); $('ttsErr').textContent=''; new Audio(URL.createObjectURL(blob)).play(); }
+  else { const d=await r.json().catch(()=>({error:'失败'})); $('ttsErr').textContent='试听失败: '+d.error; }
+};
+
+// 初始化参数输入框（从 state 拉当前值）
+(async () => { const r=await api('/api/state'); const s=await r.json();
+  $('rateInput').value = s.params.rate; $('minGapInput').value = s.params.min_gap;
+  $('windowInput').value = s.params.window.join(',');
+  if (s.params.voice) $('voiceSel').value = s.params.voice;
+})();
+setInterval(getState, 2000);
+getState();
+</script>
+</body>
+</html>

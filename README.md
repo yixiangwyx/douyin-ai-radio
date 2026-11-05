@@ -31,6 +31,22 @@ uv run python web/serve_player.py --port 8000
 uv run python -m airadio --room <直播间号> --script scripts/demo_script.txt --sink ffplay
 ```
 
+## 手机控制台（推荐：改稿 / 调百炼 / 看实时评论）
+
+一条命令起服务，手机连同一 WiFi 浏览器打开 `http://<本机IP>:8010` 就是完整控制台：
+
+```bash
+uv run python web/console.py --room <直播间号> --port 8010
+```
+
+控制台功能（全部实测可用，API 均有回归验证）：
+
+- **实时互动流**：弹幕 / 礼物 / 关注 / 进场 / 点赞 实时滚动，含昵称、礼物名、数量、时间；已插播的话术也单独列出。
+- **直播稿编辑**：载入当前稿 → 手机里改 → `保存（下一段生效）` 或 `保存并立即从头播`；带保护块 / 停顿 / 必播话术标记的语法校验，空稿直接报错拒绝。
+- **百炼参数**：换音色（cosyvoice-v2 男女声）、语速 0.5–2.0、插播最小间隔、随机插播窗口，改完立刻生效；输入文字可**试听**当前音色效果。
+- **播放控制**：暂停 / 继续 / 跳下一句 / 从头重播；切换直播间号。
+- **播放**：底部「▶ 开始连续播放（外放）」按钮，自动接播新生成的音频块（不会重播历史块）。开播手机靠近这台设备扬声器即可收音。
+
 `--room` 填 `live.douyin.com/` 后面的数字或直播间分享链接。程序会自动：
 解析真实 room_id → 生成 webcast 签名（vendor/sign.js，mini-racer）→ 连 `wss://webcast100-ws-web-lq.douyin.com/webcast/im/push/v2/` → gzip+protobuf 解析互动消息（房间未开播时自动轮询重试）。
 

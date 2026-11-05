@@ -1,5 +1,5 @@
-"""把当前 git HEAD 通过 GitHub API（tree+ref 两次调用）推到远端空仓库。"""
-import json, subprocess, urllib.request, base64, os, sys
+"""把当前 git HEAD 通过 GitHub API（tree+ref）推到远端仓库；ref 已存在则强制更新。"""
+import json, subprocess, urllib.request
 
 TOKEN = open('/tmp/gh_pat.txt').read().strip()
 REPO = "yixiangwyx/douyin-ai-radio"
@@ -12,10 +12,12 @@ def api(path, payload=None, method=None):
         method=method or ("POST" if payload is not None else "GET"),
         headers={"Authorization": f"Bearer {TOKEN}", "Accept": "application/json",
                  "Content-Type": "application/json", "User-Agent": "airadio-push"})
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.loads(r.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            return json.loads(r.read().decode())
+    except urllib.error.HTTPError as e:
+        return {"_http": e.code, "body": e.read().decode()[:300]}
 
-# 1) 取 HEAD 文件清单与内容（排除敏感/生成物）
 files = subprocess.run(["git", "ls-tree", "-r", "HEAD", "--name-only"],
                        capture_output=True, text=True, check=True).stdout.split("\n")
 entries = []
@@ -32,10 +34,16 @@ for f in files:
 
 print(f"files: {len(entries)}, skipped: {skipped}")
 
-# 2) create tree（含全部文件内容）
 tree = api(f"/repos/{REPO}/git/trees", {"tree": entries})
-print("tree:", tree.get("sha"), tree.get("message", ""))
+if "_http" in tree:
+    print("TREE FAILED:", tree); raise SystemExit(1)
+print("tree:", tree["sha"])
 
-# 3) create ref main
 ref = api(f"/repos/{REPO}/git/refs", {"ref": "refs/heads/main", "sha": tree["sha"]})
-print("ref:", ref.get("ref"), ref.get("object", {}).get("sha", ref.get("message", "")))
+if "_http" in ref and ref["_http"] == 422:  # ref exists -> force update
+    ref = api(f"/repos/{REPO}/git/refs/heads/main",
+              {"sha": tree["sha"], "force": True}, method="PATCH")
+print("ref result:", json.dumps(ref, ensure_ascii=False)[:200])
+
+branches = api(f"/repos/{REPO}/branches")
+print("branches now:", [b["name"] for b in branches] if isinstance(branches, list) else branches)

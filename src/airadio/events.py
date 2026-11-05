@@ -78,6 +78,17 @@ class InteractionQueue:
                 out.append(ev)
         return out
 
+    def recent(self, n: int = 40) -> list[dict]:
+        """最近事件（倒序），供 UI 展示。"""
+        out = []
+        for ev in list(self.items)[-n:][::-1]:
+            out.append({
+                "kind": ev.kind, "nick": ev.nick[:24],
+                "content": (ev.content or "")[:80],
+                "gift": ev.gift, "count": ev.count, "t": ev.t,
+            })
+        return out
+
     def fallback_text(self) -> str:
         return ("直播间的朋友们，如果觉得有收获，点赞分享收藏走一波，"
                 "有问题直接评论区留言，我看到都会聊。")
