@@ -4,76 +4,24 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>AI电台控制台</title>
-<style>
-  :root { --bg:#0f141a; --card:#1a2129; --card2:#222b35; --tx:#e8edf2; --dim:#8a97a5;
-          --ok:#2ecc71; --warn:#f1c40f; --err:#e74c3c; --accent:#3b82f6; --int:#27ae60; }
-  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  body { font-family:system-ui,"PingFang SC",sans-serif; background:var(--bg); color:var(--tx);
-         margin:0; padding:12px 12px 90px; font-size:15px; }
-  h1 { font-size:17px; margin:4px 0 12px; }
-  .card { background:var(--card); border-radius:12px; padding:12px; margin-bottom:12px; }
-  .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-  .status { font-size:13px; color:var(--dim); }
-  .status b.ok{color:var(--ok)} .status b.err{color:var(--err)} .status b.warn{color:var(--warn)}
-  .stats { display:flex; gap:10px; flex-wrap:wrap; font-size:13px; color:var(--dim); margin-top:6px; }
-  .stats span b { color:var(--tx); }
-  button { background:var(--accent); color:#fff; border:0; border-radius:10px;
-           padding:11px 14px; font-size:15px; min-height:42px; }
-  button.ghost { background:var(--card2); }
-  button.warn { background:#b8860b; }
-  button.danger { background:var(--err); }
-  button:disabled { opacity:.45; }
-  textarea, input { width:100%; background:#0c1116; color:var(--tx); border:1px solid #2b3641;
-                    border-radius:8px; padding:10px; font-size:14px; font-family:inherit; }
-  textarea { min-height:180px; line-height:1.6; }
-  input { min-height:40px; }
-  label { font-size:12px; color:var(--dim); display:block; margin:8px 0 3px; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  .topiclist { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
-  .topic-chip { padding:6px 10px; border-radius:14px; background:var(--card2); border:1px solid #2b3641;
-                font-size:13px; cursor:pointer; }
-  .topic-chip.sel { border-color:var(--accent); background:#123042; }
-  .topic-chip .x { color:var(--dim); margin-left:6px; }
-  .scriptlist { margin-top:6px; }
-  .scriptlist .srow { display:flex; gap:8px; align-items:center; padding:8px 0; border-top:1px solid #2b3641; }
-  .scriptlist .stitle { flex:1; font-size:14px; }
-  .scriptlist .smeta { color:var(--dim); font-size:11px; }
-  .scriptlist button { min-height:34px; padding:0 10px; font-size:13px; }
-  .feed div { padding:7px 9px; margin:5px 0; border-radius:8px; background:var(--card2);
-              font-size:14px; line-height:1.45; word-break:break-all; }
-  .feed .e-chat{border-left:3px solid var(--accent)} .feed .e-gift{border-left:3px solid var(--int)}
-  .feed .e-follow{border-left:3px solid var(--warn)} .feed .e-member{border-left:3px solid #555}
-  .feed .e-like{border-left:3px solid #666; color:var(--dim)} .feed .e-insert{background:#123524;border:1px solid #1f6b45}
-  .tag { font-size:11px; padding:1px 6px; border-radius:6px; background:#00000055; margin-right:6px; }
-  .log div { font-size:12px; color:var(--dim); padding:2px 0; font-family:ui-monospace,monospace; }
-  details summary { cursor:pointer; color:var(--dim); font-size:14px; }
-  .hint { font-size:12px; color:var(--dim); margin-top:6px; line-height:1.5; }
-  .toast { position:fixed; left:12px; right:12px; bottom:78px; background:#1f6b45; color:#fff;
-           padding:11px 13px; border-radius:10px; font-size:14px; z-index:50;
-           box-shadow:0 4px 14px #000a; opacity:0; transform:translateY(8px); transition:.18s; }
-  .toast.show { opacity:1; transform:none; }
-  .toast.err { background:#8e2b20; }
-  button.busy { opacity:.55; }
-  .bar { height:7px; background:#0c1116; border-radius:5px; overflow:hidden; margin-top:6px; }
-  .bar i { display:block; height:100%; background:var(--int); width:0%; transition:width .4s; }
-  #playBtn { position:fixed; left:12px; right:12px; bottom:10px; background:var(--int);
-             font-size:16px; box-shadow:0 4px 14px #0009; }
-</style>
+<link rel="stylesheet" href="/app.css">
 </head>
 <body>
-<h1>📻 AI电台控制台</h1>
-
 <div class="card">
-  <div class="status" id="status">连接中…</div>
+  <div class="headrow">
+    <h1 style="margin:0">📻 AI电台</h1>
+    <div class="row" style="gap:6px">
+      <span class="badge" id="whoBadge">–</span>
+      <button class="ghost" id="btnStart" style="min-height:34px;padding:0 10px;font-size:13px">开始新直播</button>
+      <button class="ghost" id="btnLogout" style="min-height:34px;padding:0 10px;font-size:13px">退出</button>
+    </div>
+  </div>
+  <div class="status" id="status" style="margin-top:8px">连接中…</div>
   <div class="stats" id="stats"></div>
   <div class="row" style="margin-top:8px">
     <button id="btnPause">暂停</button>
     <button class="ghost" id="btnSkip">跳下一句</button>
     <button class="ghost" id="btnRewind">从头重播</button>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <input id="roomInput" placeholder="切换直播间号" style="flex:1">
-    <button class="ghost" id="btnRoom">切房</button>
   </div>
   <div class="row" style="margin-top:8px;justify-content:space-between">
     <span class="status" id="playPos">播放进度 –</span>
@@ -82,293 +30,268 @@
   <div class="bar"><i id="readyBar"></i></div>
 </div>
 
-<div class="card">
-  <b style="font-size:15px">直播间实时互动</b>
-  <div class="feed" id="feed"></div>
+<div class="tabs" id="tabs">
+  <button data-tab="live" class="on">实时互动</button>
+  <button data-tab="script">稿子</button>
+  <button data-tab="voice">音色</button>
+  <button data-tab="phrases">话术</button>
+  <button data-tab="params">插播参数</button>
+  <button data-tab="account">我的账号</button>
+  <button data-tab="log">日志</button>
 </div>
 
-<div class="card">
-  <div class="row" style="justify-content:space-between">
-    <b style="font-size:15px">直播稿</b>
-    <button class="ghost" id="btnLoadScript">载入当前稿</button>
+<!-- ============ 实时互动 ============ -->
+<div class="tabbody on" data-body="live">
+  <div class="card">
+    <b style="font-size:15px">这个直播间的实时互动</b>
+    <div class="hint" id="giftHint" style="margin-top:6px"></div>
+    <div class="feed" id="feed"></div>
   </div>
-  <textarea id="scriptBox" placeholder="点这里载入当前稿后可编辑，或粘贴新稿"></textarea>
-  <div class="row" style="margin-top:8px">
-    <button id="btnSaveScript">保存（下一段生效）</button>
-    <button class="warn" id="btnSaveNow">保存并立即从头播</button>
+  <div class="card">
+    <b style="font-size:15px">切换直播间</b>
+    <div class="row" style="margin-top:6px">
+      <input id="roomInput" placeholder="直播间号（live.douyin.com/ 后面的数字）" style="flex:1">
+      <button class="ghost" id="btnRoom">切房</button>
+    </div>
+    <div class="hint">只有这一个页面在看的这段时间里，服务端才在采这个房间；页面关掉超过 <b id="idleS">–</b> 秒会自动停止（不挂后台）。</div>
+    <div class="savebar"><button class="ghost" onclick="toast('这一页不需要保存')">本页无需保存</button></div>
   </div>
-  <div class="hint">标记：<code>[[no interrupt]]…[[/no interrupt]]</code> 不许插断 · <code>[[pause:500]]</code> 停顿 · <code>[[待插:…]]</code> 必播话术 · <code>#</code> 段标题 · 一行不写句号=整句不可插断</div>
-  <div class="row" style="margin-top:8px">
+</div>
+
+<!-- ============ 稿子 ============ -->
+<div class="tabbody" data-body="script">
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b style="font-size:15px">本场直播稿</b>
+      <button class="ghost" id="btnLoadScript">载入当前稿</button>
+    </div>
+    <textarea id="scriptBox" placeholder="点「载入当前稿」编辑，或粘贴新稿"></textarea>
+    <div class="hint">标记：<code>[[no interrupt]]…[[/no interrupt]]</code> 不许插断 · <code>[[pause:500]]</code> 停顿 · <code>[[待插:…]]</code> 必播话术 · <code>#</code> 段标题 · 一行不写句号 = 整句不可插断。<b>一行 = 一段话</b>，不会按句号拆碎。</div>
+  </div>
+  <div class="card">
+    <b style="font-size:15px">稿子库（只放你自己的稿）</b>
+    <label style="margin-top:4px">上传稿子（选 .txt 文件，一行一句）</label>
+    <div class="row" style="margin-top:4px">
+      <input type="file" id="scriptFile" accept=".txt,text/plain" style="flex:1">
+      <div style="flex:1"><label>稿子名称（留空用文件名）</label><input id="uploadTitle" placeholder="例：相亲女 第2版"></div>
+      <button id="btnUploadScript" style="flex-shrink:0">上传</button>
+    </div>
+    <div class="hint">不自动轮换：当前这套稿播完就从头循环。要换稿点下面「播放这稿」。</div>
+    <div id="scriptList" class="scriptlist"></div>
+  </div>
+  <div class="savebar">
+    <button id="btnSaveNow">保存并立即从头播</button>
+    <button class="ghost" id="btnSaveScript">保存（下一段生效）</button>
     <button class="ghost" id="btnSaveToLib">存进稿子库</button>
-    <div style="flex:1"><label>稿子标题</label><input id="libTitle" placeholder="例：相亲女 第2版"></div>
+    <input id="libTitle" placeholder="存进稿子库时的标题" style="flex:1;max-width:180px">
   </div>
 </div>
 
-<div class="card">
-  <b style="font-size:15px">稿子库（只放你自己的稿）</b>
-  <label style="margin-top:4px">上传稿子（选 .txt 文件，一行一句）</label>
-  <div class="row" style="margin-top:4px">
-    <input type="file" id="scriptFile" accept=".txt,text/plain" style="flex:1;min-height:40px;border:1px solid #2b3641;border-radius:8px;padding:8px;font-size:13px">
-    <div style="flex:1"><label>稿子名称（留空用文件名）</label><input id="uploadTitle" placeholder="例：留人话术 第2版"></div>
-    <button id="btnUploadScript" style="flex-shrink:0">上传</button>
-  </div>
-  <div class="hint">不自动轮换：当前这套稿播完就从头循环。要换稿就在下面点「播放这稿」或上传新稿。</div>
-  <div id="scriptList" class="scriptlist"></div>
-</div>
-
-<div class="card">
-  <b style="font-size:15px">语音模型与音色（可自由切换）</b>
-  <div class="row">
-    <input id="apiKeyInput" type="password" placeholder="百炼 API Key（sk-…）留空=用服务器 .env" style="flex:1">
-    <button class="ghost" id="btnApiKey">保存 Key</button>
-  </div>
-  <div class="hint" id="apiKeyHint"></div>
-  <div class="grid">
-    <div><label>语音模型</label>
-      <select id="modelSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px"></select>
+<!-- ============ 音色 ============ -->
+<div class="tabbody" data-body="voice">
+  <div class="card">
+    <b style="font-size:15px">百炼 Key 与当前音色</b>
+    <div class="row" style="margin-top:6px">
+      <input id="apiKeyInput" type="password" placeholder="百炼 API Key（sk-…）留空=用服务器 .env" style="flex:1">
+      <button class="ghost" id="btnApiKey">保存 Key</button>
     </div>
-    <div><label>音色（随模型变化）</label>
-      <select id="voiceSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px"></select>
+    <div class="hint" id="apiKeyHint"></div>
+    <div class="grid">
+      <div><label>语音模型</label><select id="modelSel"></select></div>
+      <div><label>音色（随模型变化）</label><select id="voiceSel"></select></div>
+      <div><label>语速 0.5–2.0</label><input id="rateInput" type="number" step="0.1" min="0.5" max="2"></div>
     </div>
-    <div><label>语速 0.5–2.0</label><input id="rateInput" type="number" step="0.1" min="0.5" max="2"></div>
-    <div><label>插播最小间隔（秒）</label><input id="minGapInput" type="number" step="5" min="5"></div>
-    <div><label>全局默认随机窗口（秒）低,高</label><input id="windowInput" placeholder="60,150"></div>
+    <div class="hint" id="modelHint">系统音色列表是按这个账号实测过的。<b>cosyvoice-v3.5 系列没有系统音色</b>：必须先用下面「填提示词」或「录音」生成音色。音色绑定生成它的模型，不能跨模型用。</div>
   </div>
-  <div class="hint" id="modelHint">系统音色列表是按你这个账号实测过的（scripts/probe_voices.py 可重测）。<b>cosyvoice-v3.5 系列没有系统音色</b>：必须先在下面用「填提示词」或「录音」生成音色，再切到 v3.5。音色绑定生成时的模型，不能跨模型用。</div>
-  <div style="border-top:1px solid #2b3641;margin-top:10px;padding-top:10px">
-    <b style="font-size:14px">生成新音色（两种都行：填提示词 / 录你自己的声音）</b>
+  <div class="card">
+    <b style="font-size:14px">生成新音色（填提示词 / 录你自己的声音，都行）</b>
     <label style="margin-top:6px">方式 A · 填提示词描述想要的音色（不用录音）</label>
+    <textarea id="voicePrompt" placeholder="例：一位三十岁左右的女性，声音温柔知性，语速偏慢，适合直播间的安抚式讲解" style="min-height:64px;font-size:13px"></textarea>
     <div class="row" style="margin-top:4px">
-      <textarea id="voicePrompt" placeholder="例：一位三十岁左右的女性，声音温柔知性，语速偏慢，适合直播间的安抚式讲解" style="flex:1;min-height:64px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px"></textarea>
-    </div>
-    <div class="row" style="margin-top:4px">
-      <input id="voicePreview" placeholder="试听文本（生成时会用它出一段样例音，可改）" style="flex:1">
-    </div>
-    <div class="row" style="margin-top:4px">
-      <button class="ghost" id="btnDesignVoice">按提示词生成音色</button>
+      <input id="voicePreview" placeholder="试听文本（生成时用它出一段样例音，可改）" style="flex:1">
     </div>
     <label style="margin-top:8px">方式 B · 录你自己的声音（复刻）</label>
     <div class="row" style="margin-top:4px">
       <button class="ghost" id="btnMic">🎙 录10–20秒</button>
       <span id="micTimer" class="status"></span>
-      <input type="file" id="voiceFile" accept="audio/*" style="flex:1;min-height:38px">
+      <input type="file" id="voiceFile" accept="audio/*" style="flex:1">
     </div>
     <div class="row" style="margin-top:6px">
       <input id="voicePrefix" placeholder="音色名：英文小写字母数字，&lt;10位（如 xiangge01）" style="flex:1">
-      <button id="btnClone">用录音生成音色</button>
+      <button id="btnDesignVoice">按提示词生成</button>
+      <button id="btnClone">用录音生成</button>
     </div>
-    <div class="hint">录音要求：安静环境、离麦克风近、连续说 10–20 秒（不要音乐、不要只哼）。提交前服务器会先本地体检时长与有效语音，太短或听不出说话会直接告诉你原因。</div>
+    <div class="hint">录音要求：安静环境、离麦克风近、连续说 10–20 秒。提交前服务器会先本地体检时长与有效语音，太短或听不出说话会直接告诉你原因。</div>
     <div class="hint" id="cloneHint"></div>
   </div>
-  <div style="border-top:1px solid #2b3641;margin-top:10px;padding-top:10px">
-    <b style="font-size:14px">预生成（提前合成，避免边播边等）</b>
-    <div class="row" style="margin-top:6px">
-      <div style="flex:1"><label>自动预生成后面 N 句（0=关闭）</label><input id="prefetchInput" type="number" min="0" max="20"></div>
-      <div style="flex:1"><label>每次合并生成句数（1=逐句，2–6=连贯）</label><input id="mergeInput" type="number" min="1" max="6"></div>
-      <div style="flex:1"><label>句间停顿（毫秒）</label><input id="gapInput" type="number" min="0" max="3000" step="50"></div>
-      <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="trimChk" style="width:auto;min-height:auto">裁掉每块首尾静音</label>
-    </div>
-    <div class="row" style="margin-top:6px">
-      <button class="ghost" id="btnPrefetchN">预生成 N 句</button>
-      <button class="ghost" id="btnPrefetchAll">预生成整稿</button>
-    </div>
-    <div class="hint" id="prefetchHint">「每次合并生成句数」>1 时，连续几句进同一次合成——组内没有静音、语气连贯（代价：组内不再有插播点）。「句间停顿」=0 就一句接一句不留空。提交新稿不会一次全部提交给百炼，点「预生成整稿」才一次合成完。</div>
+  <div class="card">
+    <div class="row"><input id="ttsTestInput" placeholder="试听文字" style="flex:1"><button class="ghost" id="btnTtsTest">试听当前音色</button></div>
+    <div class="hint" id="ttsErr"></div>
   </div>
-  <label style="margin-top:12px">每类互动的随机插播区间（秒，低,高）— 留空=跟随全局默认</label>
-  <div class="grid">
-    <div><label>礼物 gift</label><input id="kw_gift" placeholder="15,40"></div>
-    <div><label>弹幕 chat</label><input id="kw_chat" placeholder="20,50"></div>
-    <div><label>灯牌/粉丝团 badge</label><input id="kw_badge" placeholder="20,50"></div>
-    <div><label>关注 follow</label><input id="kw_follow" placeholder="30,80"></div>
-    <div><label>进场 member</label><input id="kw_member" placeholder="45,120"></div>
-    <div><label>点赞 like</label><input id="kw_like" placeholder="90,180"></div>
-  </div>
-  <div class="row" style="margin-top:8px">
-    <button id="btnParams">应用参数</button>
-    <input id="ttsTestInput" placeholder="试听文字" style="flex:1">
-    <button class="ghost" id="btnTtsTest">试听</button>
-  </div>
-  <div class="hint" id="ttsErr"></div>
-  <div class="hint">优先级：礼物&gt;弹幕&gt;灯牌&gt;关注&gt;进场&gt;点赞；同一批到期只念最新的几条。稿子没变时循环复用已合成音频（只对新插播内容调 TTS），换音色/语速后自动重新合成。</div>
+  <div class="savebar"><button id="btnSaveVoice">保存模型/语速（立即生效）</button></div>
 </div>
 
-<div class="card">
-  <b style="font-size:15px">互动话术（每类可写多条，随机播）</b>
-  <div class="hint" id="phHint" style="margin-top:6px"></div>
-  <label style="margin-top:6px">占位符（点一下插到正在编辑的话术框里）</label>
-  <div id="phChips" class="topiclist"></div>
-  <div class="hint">每类话术一行一条，播放时随机选一条；随时改，保存后立刻生效。<code>[昵称]</code> 会按下面的昵称规则处理；时间占位符在任何话术里都能用（包括 <code>[[待插:…]]</code>）。</div>
-  <div id="phraseEditors"></div>
-  <div class="row" style="margin-top:8px">
-    <button id="btnSavePhrases">保存话术（立即生效）</button>
-    <button class="ghost" id="btnReloadPhrases">重新载入</button>
+<!-- ============ 话术 ============ -->
+<div class="tabbody" data-body="phrases">
+  <div class="card">
+    <b style="font-size:15px">互动话术（每类写多条，随机播）</b>
+    <div class="hint" id="phHint" style="margin-top:6px"></div>
+    <label style="margin-top:6px">占位符（先点进要插入的话术框，再点下面按钮）</label>
+    <div id="phChips" class="chips"></div>
+    <div class="hint">一行一条，播放时随机选一条。<code>[昵称]</code> 会按下面的昵称规则处理；时间占位符在任何话术里都能用（包括稿子里的 <code>[[待插:…]]</code>）。</div>
+    <div id="phraseEditors"></div>
   </div>
-  <div class="hint" id="phraseHint"></div>
-
-  <div style="border-top:1px solid #2b3641;margin-top:12px;padding-top:10px">
+  <div class="card">
     <b style="font-size:14px">读昵称的规则</b>
     <div class="row" style="margin-top:6px">
-      <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="nickHanChk" style="width:auto;min-height:auto">只读汉字（emoji/字母/数字跳过）</label>
+      <label style="flex:1;display:flex;align-items:center;gap:6px"><input type="checkbox" id="nickHanChk" style="width:auto;min-height:auto">只读汉字（emoji/字母/数字跳过）</label>
       <div style="flex:1"><label>最多读几个字</label><input id="nickMaxInput" type="number" min="1" max="20"></div>
     </div>
-    <div class="hint">例：昵称「兴旺🌹的大刘啊」→ 只读汉字 + 最多 3 字 = 「兴旺的」。全 emoji/全字母的昵称会读成「直播间的朋友」，不会出现半句。</div>
+    <div class="hint">例：「兴旺🌹的大刘啊」+ 只读汉字 + 最多 4 字 → 读「兴旺的大刘」。全 emoji 的昵称读「直播间的朋友」，不会出半句。</div>
   </div>
-
-  <div style="border-top:1px solid #2b3641;margin-top:12px;padding-top:10px">
-    <b style="font-size:14px">随机报时（在句子边界随机插播当前时间）</b>
+  <div class="card">
+    <b style="font-size:14px">随机报时</b>
     <div class="row" style="margin-top:6px">
-      <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="announceChk" style="width:auto;min-height:auto">开启随机报时</label>
+      <label style="flex:1;display:flex;align-items:center;gap:6px"><input type="checkbox" id="announceChk" style="width:auto;min-height:auto">开启随机报时</label>
       <div style="flex:1"><label>间隔下限（秒）</label><input id="annMinInput" type="number" min="60" step="60"></div>
       <div style="flex:1"><label>间隔上限（秒）</label><input id="annMaxInput" type="number" min="120" step="60"></div>
     </div>
     <label style="margin-top:6px">报时话术（一行一条，随机选；写时间占位符）</label>
-    <textarea id="timePhrases" style="width:100%;min-height:96px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px"></textarea>
-    <div class="hint">例：<code>现在是[时点][时分]，刚进来的朋友先点个关注。</code> → 实际读成「现在是19点05分…」。报时同样受上面的"插播最小间隔"约束，不会连着念。</div>
+    <textarea id="timePhrases" style="min-height:90px;font-size:13px"></textarea>
+    <label style="margin-top:8px">长时间没互动时的兜底话术</label>
+    <textarea id="fallbackPhrases" style="min-height:70px;font-size:13px"></textarea>
   </div>
-
-  <div style="border-top:1px solid #2b3641;margin-top:12px;padding-top:10px">
-    <b style="font-size:14px">长时间没互动时的兜底话术</b>
-    <textarea id="fallbackPhrases" style="width:100%;min-height:72px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px"></textarea>
+  <div class="savebar">
+    <button id="btnSavePhrases">保存话术（立即生效）</button>
+    <button class="ghost" id="btnReloadPhrases">重新载入</button>
+    <span class="hint" id="phraseHint" style="margin:0"></span>
   </div>
 </div>
 
-<div class="card">
-  <details><summary>运行日志 / 插播记录</summary><div class="log" id="log"></div></details>
+<!-- ============ 插播参数 ============ -->
+<div class="tabbody" data-body="params">
+  <div class="card">
+    <b style="font-size:15px">插播节奏</b>
+    <div class="grid">
+      <div><label>插播最小间隔（秒）</label><input id="minGapInput" type="number" step="5" min="5"></div>
+      <div><label>全局默认随机窗口（秒）低,高</label><input id="windowInput" placeholder="25,40"></div>
+    </div>
+    <label style="margin-top:10px">每类互动各自的随机区间（秒，低,高）— 留空=跟随全局</label>
+    <div class="grid">
+      <div><label>礼物 gift</label><input id="kw_gift" placeholder="15,40"></div>
+      <div><label>弹幕 chat</label><input id="kw_chat" placeholder="20,50"></div>
+      <div><label>灯牌/粉丝团 badge</label><input id="kw_badge" placeholder="20,50"></div>
+      <div><label>关注 follow</label><input id="kw_follow" placeholder="30,80"></div>
+      <div><label>进场 member</label><input id="kw_member" placeholder="45,120"></div>
+      <div><label>点赞 like</label><input id="kw_like" placeholder="90,180"></div>
+    </div>
+    <div class="hint">优先级：礼物&gt;弹幕&gt;灯牌&gt;关注&gt;进场&gt;点赞；同一批到期只念最新的几条。</div>
+  </div>
+  <div class="card">
+    <b style="font-size:15px">生成与连贯性</b>
+    <div class="grid">
+      <div><label>自动预生成后面 N 句（0=关闭）</label><input id="prefetchInput" type="number" min="0" max="20"></div>
+      <div><label>每次合并生成句数（1=逐句，2–6=连贯）</label><input id="mergeInput" type="number" min="1" max="6"></div>
+      <div><label>句间停顿（毫秒）</label><input id="gapInput" type="number" min="0" max="3000" step="50"></div>
+      <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" id="trimChk" style="width:auto;min-height:auto">裁掉每块首尾静音</label>
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button class="ghost" id="btnPrefetchN">预生成 N 句</button>
+      <button class="ghost" id="btnPrefetchAll">预生成整稿</button>
+    </div>
+    <div class="hint">合并 &gt;1：连续几句进同一次合成，组内无静音、语气连贯（代价：组内不再有插播点）。「句间停顿」=0 就一句接一句不留空。提交新稿不会一次全部提交给百炼。</div>
+  </div>
+  <div class="card">
+    <b style="font-size:15px">要礼物数据：填抖音登录 Cookie</b>
+    <div class="hint" style="margin-top:6px">抖音服务端<b>只给已登录的连接下发礼物消息</b>。不填 Cookie 时弹幕/进场/关注/点赞/灯牌都有，礼物一定是 0（实测 100 秒：179 进场 / 111 弹幕 / 54 点赞 / 0 礼物）。要插播「谁送了礼物」就填：</div>
+    <div class="row" style="margin-top:6px">
+      <textarea id="dyCookie" placeholder="浏览器登录抖音后，从任意 live.douyin.com 请求里复制的整串 Cookie（必须含 sessionid_ss=…）" style="flex:1;min-height:70px;font-size:12px"></textarea>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <button class="ghost" id="btnClearCookie">清除（不采礼物）</button>
+      <span class="badge" id="dyBadge">状态 –</span>
+    </div>
+    <div class="hint">Cookie 会过期；被风控时表现为"先收到一条礼物后就没有了"，换一份即可。同一个 Cookie 同时只对一个直播间有效。</div>
+  </div>
+  <div class="savebar"><button id="btnParams">保存参数（立即生效）</button></div>
+</div>
+
+<!-- ============ 我的账号 ============ -->
+<div class="tabbody" data-body="account">
+  <div class="card">
+    <b style="font-size:15px">我的账号</b>
+    <div class="status" id="acctInfo" style="margin-top:6px">–</div>
+    <label style="margin-top:8px">改密码</label>
+    <div class="row">
+      <input id="pwOld" type="password" placeholder="原密码" style="flex:1">
+      <input id="pwNew" type="password" placeholder="新密码（至少 6 位）" style="flex:1">
+    </div>
+    <label>当前会话（这台设备）</label>
+    <div class="hint" id="sessionInfo">–</div>
+    <div class="row" style="margin-top:8px">
+      <button class="danger" id="btnStopSession">立即停止我这个电台</button>
+    </div>
+    <div class="hint">页面关掉（或超过 <b id="idleS2">–</b> 秒没请求）会自动停止，不占后台、不再请求百炼。想重新开始就点顶部「开始新直播」。</div>
+  </div>
+  <div class="savebar"><button id="btnChangePw">保存新密码</button></div>
+</div>
+
+<!-- ============ 日志 ============ -->
+<div class="tabbody" data-body="log">
+  <div class="card"><b style="font-size:15px">运行日志 / 插播记录</b><div class="log" id="log" style="margin-top:6px"></div></div>
+  <div class="savebar"><button class="ghost" id="btnReloadLog">刷新日志</button></div>
+</div>
+
+<!-- ============ 开播向导 ============ -->
+<div class="modal" id="startModal">
+  <div class="box">
+    <b style="font-size:16px">开始新直播</b>
+    <label style="margin-top:8px">直播间号</label>
+    <input id="startRoom" placeholder="live.douyin.com/ 后面的数字">
+    <label style="margin-top:8px">这一场用哪套稿</label>
+    <select id="startScript"></select>
+    <div id="startPasteWrap" style="display:none">
+      <label style="margin-top:4px">粘贴新稿（一行一段）</label>
+      <textarea id="startPaste" style="min-height:90px;font-size:13px"></textarea>
+    </div>
+    <label style="margin-top:8px">本场音色关键字（用它生成一个新的音色）</label>
+    <input id="startVoiceKey" placeholder="英文小写字母数字 &lt;10 位，例：qinhun01。会用它生成符合这个方向的新音色">
+    <label style="margin-top:4px">想要什么样的声音（可留空，我按关键字生成）</label>
+    <textarea id="startVoiceDesc" placeholder="例：三十岁上下女性，声音温柔亲切，语速中等，长时间听不累" style="min-height:60px;font-size:13px"></textarea>
+    <div class="row" style="margin-top:10px">
+      <button id="btnStartGo">生成新音色并开始</button>
+      <button class="ghost" id="btnStartSkip">跳过，用现有音色开始</button>
+      <button class="ghost" id="btnStartCancel">取消</button>
+    </div>
+    <div class="hint">每开一场都建议生成一个新的音色（关键字只用来命名与描述方向）。跳过就沿用你上次用的音色。</div>
+    <div class="hint" id="startHint"></div>
+  </div>
 </div>
 
 <button id="playBtn">▶ 开始连续播放（外放）</button>
+<div class="toast" id="toast"></div>
 
+<script src="/app.js"></script>
 <script>
-let autoPlay = false, playedThrough = 0, audioQueue = [], busy = false;
-let audioCtx = null, activeSources = [], nextStartAt = 0, metaCache = null;
-// 已下载/解码过的音频按内容哈希缓存：循环重播时不再向服务端重复取同样的字节。
-// 上限 150 段（约几十 MB 解码后音频），超出按先进先出丢弃正在播的不受影响。
-const bufCache = new Map(), BUF_CACHE_MAX = 150;
-function bufCachePut(k, v) {
-  bufCache.set(k, v);
-  if (bufCache.size > BUF_CACHE_MAX) bufCache.delete(bufCache.keys().next().value);
+/* ---------------- 选项卡 ---------------- */
+const TAB_KEY = 'airadio_tab';
+function showTab(name) {
+  for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === name);
+  for (const el of document.querySelectorAll('.tabbody')) el.classList.toggle('on', el.dataset.body === name);
+  localStorage.setItem(TAB_KEY, name);
 }
-const $ = id => document.getElementById(id);
+for (const b of document.querySelectorAll('#tabs button')) b.onclick = () => showTab(b.dataset.tab);
+showTab(localStorage.getItem(TAB_KEY) || 'live');
 
-async function api(path, body) {
-  const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : undefined);
-  return r;
-}
-let toastTimer = null, inflight = new Set();
-function toast(msg, isErr) {
-  let t = $('toast');
-  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
-  t.textContent = msg;
-  t.className = 'toast show' + (isErr ? ' err' : '');
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.className = 'toast' + (isErr ? ' err' : ''); }, 2600);
-}
-// 统一的按钮动作：防止重复点击 + 明确反馈（成功/失败都提示）
-// btnId 传 null 表示列表里的临时按钮（没有固定 id），用 label 作为去重键
-async function act(btnId, label, fn) {
-  const key = btnId || ('anon:' + label);
-  if (inflight.has(key)) { toast(label + '：正在处理中，请稍候', true); return; }
-  inflight.add(key);
-  const b = btnId ? $(btnId) : null;
-  const old = b ? b.textContent : '';
-  if (b) { b.classList.add('busy'); b.textContent = '处理中…'; }
-  try {
-    const msg = await fn();
-    if (msg) toast(msg);
-  } catch (e) {
-    toast(label + '失败：' + (e && e.message ? e.message : e), true);
-  } finally {
-    inflight.delete(key);
-    if (b) { b.classList.remove('busy'); b.textContent = old; }
-  }
-}
-async function postJSON(path, body) {
-  const r = await api(path, body);
-  let d = {};
-  try { d = await r.json(); } catch (e) {}
-  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
-  return d;
-}
-let logBuf = [], logCursor = 0;   // 日志增量缓冲：轮询只要新增条目，不重拉整段历史
-let polling = false;              // 同一次轮询没回来就不发下一次（隧道慢时轮询会重叠，重叠会拿到同一批日志）
-async function getState() {
-  if (polling) return;
-  polling = true;
-  try {
-    const r = await api('/api/state?lite=1&log_after=' + logCursor); if (!r.ok) return;
-    const s = await r.json();
-    if (s.log && s.log.length) {
-      // 去重后再追加：即使两次轮询重叠拿到同一批，页面上也不会重复显示
-      const have = new Set(logBuf.slice(-120));
-      const fresh = s.log.filter(x => !have.has(x));
-      if (fresh.length) {
-        logBuf = logBuf.concat(fresh);
-        if (logBuf.length > 300) logBuf = logBuf.slice(-300);
-      }
-    }
-    if (typeof s.log_total === 'number') logCursor = s.log_total;
-    s.log = logBuf;          // 渲染统一用本地缓冲
-    render(s);
-  } catch(e) { $('status').textContent = '服务连接中断，重试中…'; }
-  finally { polling = false; }
-}
-function render(s) {
-  const st = $('status');
-  const live = s.room.live && s.status.includes('connected');
-  st.innerHTML = '房间 ' + (s.room.web_rid||'-') + ' · ' + (s.room.title||'') + ' — ' +
-    (s.status.includes('connected') ? '<b class=ok>已连接</b>' :
-     s.status.includes('live:') ? '<b class=warn>连接中…</b>' :
-     s.status.includes('not_live') ? '<b class=warn>未开播(自动重试)</b>' :
-     '<b class=err>' + s.status + '</b>') +
-    (s.paused ? ' · <b class=warn>已暂停</b>' : '') +
-    (s.tts_error ? ' · <b class=err>TTS: '+s.tts_error+'</b>' : '');
-  const c = s.stats.chat||0, g = s.stats.gift||0, f = s.stats.follow||0, m = s.stats.member||0, l = s.stats.like||0;
-  $('stats').innerHTML = `<span>弹幕 <b>${c}</b></span><span>礼物 <b>${g}</b></span><span>关注 <b>${f}</b></span><span>进场 <b>${m}</b></span><span>点赞 <b>${l}</b></span><span>已插播 <b>${s.inserts}</b></span><span>稿件句数 <b>${s.segments}</b></span><span>TTS调用 <b>${s.tts_calls}</b> / 缓存复用 <b>${s.cache_hits}</b></span>`;
-  // 播放进度 + 音频就绪（预生成覆盖率）
-  const pos = (s.seg_index != null && s.seg_count) ? Math.min(s.seg_index, s.seg_count) : 0;
-  $('playPos').textContent = '播放进度 第 ' + pos + ' / ' + (s.seg_count || 0) + ' 段'
-    + (s.script_title ? ' · 当前稿：' + s.script_title : '')
-    + (s.rotate_enabled ? ' · 多稿轮换开（第 ' + ((s.rotate_index||0)+1) + ' 套，已播 ' + Math.round((s.script_elapsed_s||0)/60) + ' 分钟' + (s.rotate_after_s ? '/限 ' + Math.round(s.rotate_after_s/60) + ' 分钟' : '·整稿播完才切') + '）' : '')
-    + (s.prefetch_running ? ' · 预生成中 ' + (s.prefetch_done||0) + '/' + ((s.prefetch_done||0)+(s.prefetch_pending||0)) : '');
-  const ready = s.cache_ready || 0, total = s.cache_total || 0;
-  const pct = total ? Math.round(ready * 100 / total) : 0;
-  $('readyPct').innerHTML = '音频就绪 <b>' + ready + '/' + total + '</b>（' + pct + '%）'
-    + ' · 自动预生成 ' + (s.prefetch_ahead || 0) + ' 句';
-  // 复用统计：证明"循环和重启都不重复花钱、不重复下载"
-  const au = s.audio || {};
-  const reusedKB = Math.round((au.bytes_reused || 0) / 1024);
-  $('readyPct').innerHTML += ' · 服务端音频复用 <b>' + (au.blocks_reused || 0) + '</b> 次'
-    + (s.disk_cache_hits ? '（其中 ' + s.disk_cache_hits + ' 次来自上次运行）' : '')
-    + ' · 避免重复写盘 <b>' + reusedKB + '</b> KB';
-  $('readyBar').style.width = pct + '%';
-  const feed = $('feed');
-  const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', interrupt:'插播'};
-  let html = '';
-  if (s.log) {
-    const ins = s.log.filter(x=>x.includes('] INSERT:')).slice(0,3);
-    for (const line of ins) html += `<div class="e-insert"><span class=tag>已插播</span>${esc(line.split('INSERT: ')[1])}</div>`;
-  }
-  for (const e of s.events) {
-    if (e.kind === 'like') { html += `<div class="e-like"><span class=tag>点赞</span>${esc(e.nick||'')}</div>`; continue; }
-    let txt = `<span class=tag>${kindName[e.kind]||e.kind}</span><b>${esc(e.nick)}</b>`;
-    if (e.kind==='chat') txt += ' ' + esc(e.content);
-    if (e.kind==='gift') txt += ' 送出 ' + esc(e.gift||'礼物') + (e.count>1?(' ×'+e.count):'');
-    const ago = Math.max(0, Math.round(Date.now()/1000 - e.t));
-    html += `<div class="e-${e.kind}">${txt} <span style="color:var(--dim);font-size:11px">${ago}s前</span></div>`;
-  }
-  feed.innerHTML = html || '<div style="color:var(--dim)">暂无互动</div>';
-  const log = $('log');
-  log.innerHTML = (s.log||[]).slice(-40).map(esc).join('<br>');
-  $('btnPause').textContent = s.paused ? '继续' : '暂停';
-  $('btnPause').className = s.paused ? '' : 'warn';
-  // 自动播放新块
-  if (autoPlay) drainAudio(s.chunks);
-}
-function esc(x){return (x||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
+/* ---------------- 播放（Web Audio 排程接播） ---------------- */
+let autoPlay = localStorage.getItem('airadio_autoplay') === '1';
+let playedThrough = 0, busy = false, epochSeen = null;
+let audioCtx = null, activeSources = [], nextStartAt = 0;
+const bufCache = new Map();                 // 按内容哈希 URL 缓存已解码音频：循环不再重复下载
+function bufCachePut(url, buf) { bufCache.set(url, buf); if (bufCache.size > 150) bufCache.delete(bufCache.keys().next().value); }
+let metaCache = null;
 
 async function drainAudio(total) {
-  // 用 Web Audio 排程接播：预取+解码与播放并行，下一段在上一段结束时已经就位。
-  // 段间接缝按服务端 manifest 的 gap_before_ms 对齐（0 = 首尾相接，不留空档）。
   if (busy) return;
   busy = true;
   try {
@@ -376,35 +299,27 @@ async function drainAudio(total) {
     if (audioCtx.state === 'suspended') await audioCtx.resume();
     const meta = await metaUpTo(total);
     while (playedThrough < total) {
-      const i = playedThrough;
-      playedThrough++;
+      const i = playedThrough; playedThrough++;
       const url = (meta[i] && meta[i].url) || ('/chunks/' + String(i).padStart(4, '0') + '.mp3');
       let buf = bufCache.get(url);
       if (!buf) {
-        try {
-          const r = await fetch(url);
-          if (r.ok) buf = await audioCtx.decodeAudioData(await r.arrayBuffer());
-        } catch (e) { buf = null; }
-        if (buf) bufCachePut(url, buf);   // 同一内容（循环重播）不再重复下载/解码
+        try { const r = await fetch(url); if (r.ok) buf = await audioCtx.decodeAudioData(await r.arrayBuffer()); }
+        catch (e) { buf = null; }
+        if (buf) bufCachePut(url, buf);
       }
       if (!buf) continue;
       const gap = ((meta[i] && meta[i].gap_before_ms) || 0) / 1000;
       const at = Math.max(audioCtx.currentTime + 0.02, (nextStartAt || 0) + gap);
       const src = audioCtx.createBufferSource();
-      src.buffer = buf; src.connect(audioCtx.destination);
-      src.start(at);
-      activeSources.push(src);
-      nextStartAt = at + buf.duration;
+      src.buffer = buf; src.connect(audioCtx.destination); src.start(at);
+      activeSources.push(src); nextStartAt = at + buf.duration;
       src.onended = () => { const k = activeSources.indexOf(src); if (k >= 0) activeSources.splice(k, 1); };
     }
   } finally { busy = false; }
 }
 async function metaUpTo(total) {
   if (metaCache && metaCache.length >= total) return metaCache;
-  try {
-    const r = await fetch('/chunks/manifest.json?ts=' + Date.now());
-    if (r.ok) metaCache = await r.json();
-  } catch (e) { /* 没有 manifest 时按 0 停顿接播 */ }
+  try { const r = await fetch('/chunks/manifest.json?ts=' + Date.now()); if (r.ok) metaCache = await r.json(); } catch (e) {}
   return metaCache || [];
 }
 function stopAudioQueue() {
@@ -412,68 +327,181 @@ function stopAudioQueue() {
   activeSources = []; nextStartAt = 0;
 }
 
-$('playBtn').onclick = async () => {
-  autoPlay = !autoPlay;
-  $('playBtn').textContent = autoPlay ? '⏸ 停止自动播放' : '▶ 开始连续播放（外放）';
-  if (!autoPlay) stopAudioQueue();
-  if (autoPlay) { const s = await (await api('/api/state')).json(); playedThrough = s.chunks; nextStartAt = 0; render(s); }
-};
-$('btnPause').onclick = (e) => act('btnPause', '暂停/继续', async () => {
+/* ---------------- 状态轮询（lite + 日志增量游标） ---------------- */
+let logBuf = [], logCursor = 0, polling = false;
+async function getState() {
+  if (polling) return;
+  polling = true;
+  try {
+    const r = await api('/api/state?lite=1&log_after=' + logCursor);
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      if (r.status === 410 && d.need_start) { $('status').innerHTML = '<b class=warn>' + esc(d.error) + '</b>'; openStartWizard(); }
+      else if (r.status === 401) gotoLogin();
+      return;
+    }
+    const s = await r.json();
+    if (s.log && s.log.length) {
+      const have = new Set(logBuf.slice(-120));           // 去重：并发轮询可能拿到同一批
+      const fresh = s.log.filter(x => !have.has(x));
+      if (fresh.length) { logBuf = logBuf.concat(fresh); if (logBuf.length > 300) logBuf = logBuf.slice(-300); }
+    }
+    if (typeof s.log_total === 'number') logCursor = s.log_total;
+    s.log = logBuf;
+    render(s);
+  } catch (e) { $('status').textContent = '服务连接中断，重试中…'; }
+  finally { polling = false; }
+}
+
+function render(s) {
+  const st = $('status');
+  st.innerHTML = '房间 ' + esc(s.room.web_rid || '-') + ' · ' + esc(s.room.title || '') + ' — ' +
+    (s.status.includes('connected') ? '<b class=ok>已连接</b>' :
+     s.status.includes('live:') ? '<b class=warn>连接中…</b>' :
+     s.status.includes('not_live') ? '<b class=warn>未开播(自动重试)</b>' :
+     '<b class=err>' + esc(s.status) + '</b>') +
+    (s.paused ? ' · <b class=warn>已暂停</b>' : '') +
+    (s.tts_error ? ' · <b class=err>TTS: ' + esc(s.tts_error) + '</b>' : '');
+  const c = s.stats.chat||0, g = s.stats.gift||0, f = s.stats.follow||0, m = s.stats.member||0, l = s.stats.like||0, b = s.stats.badge||0;
+  $('stats').innerHTML = `<span>弹幕 <b>${c}</b></span><span>礼物 <b>${g}</b></span><span>关注 <b>${f}</b></span><span>灯牌 <b>${b}</b></span><span>进场 <b>${m}</b></span><span>点赞 <b>${l}</b></span><span>已插播 <b>${s.inserts}</b></span><span>段数 <b>${s.segments}</b></span><span>TTS <b>${s.tts_calls}</b>/复用 <b>${s.cache_hits}</b></span>`;
+  const dl = s.douyin_login || {};
+  $('giftHint').innerHTML = dl.gift_available === false
+    ? '<b class="warn">没有礼物数据：抖音只给已登录的连接下发礼物消息。</b>去「插播参数」页填抖音登录 Cookie 就能收到礼物（弹幕/进场/关注/点赞/灯牌不受影响）。'
+    : (dl.gift_available ? '<span style="color:var(--ok)">登录 Cookie 已生效，礼物消息正常接收。</span>' : '');
+
+  const pos = (s.seg_index != null && s.seg_count) ? Math.min(s.seg_index, s.seg_count) : 0;
+  $('playPos').textContent = '播放进度 第 ' + pos + ' / ' + (s.seg_count || 0) + ' 段'
+    + (s.script_title ? ' · 当前稿：' + s.script_title : '')
+    + (s.prefetch_running ? ' · 预生成中 ' + (s.prefetch_done||0) + '/' + ((s.prefetch_done||0)+(s.prefetch_pending||0)) : '');
+  const ready = s.cache_ready || 0, total = s.cache_total || 0, pct = total ? Math.round(ready*100/total) : 0;
+  const au = s.audio || {};
+  $('readyPct').innerHTML = '音频就绪 <b>' + ready + '/' + total + '</b>（' + pct + '%）· 复用 <b>' + (au.blocks_reused||0) + '</b> 次'
+    + (s.disk_cache_hits ? '（' + s.disk_cache_hits + ' 次来自上次运行）' : '');
+  $('readyBar').style.width = pct + '%';
+  if (s.session) { $('idleS').textContent = s.session.idle_stop_s; $('idleS2').textContent = s.session.idle_stop_s; }
+
+  // 服务端换了播放位置（从头重播/跳句/换稿）→ 清掉已排好的队列，从新起点接播
+  if (typeof s.playback_epoch === 'number' && epochSeen !== null && s.playback_epoch !== epochSeen) {
+    stopAudioQueue();
+    playedThrough = (typeof s.play_start_chunk === 'number') ? s.play_start_chunk : s.chunks;
+    nextStartAt = 0;
+    toast('已从新位置接播（旧队列已清空）');
+  }
+  if (typeof s.playback_epoch === 'number') epochSeen = s.playback_epoch;
+
+  const feed = $('feed');
+  const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', badge:'灯牌'};
+  let html = '';
+  if (s.log) for (const line of s.log.filter(x => x.includes('] INSERT:')).slice(0,3))
+    html += `<div class="e-insert"><span class=tag>已插播</span>${esc(line.split('INSERT: ')[1])}</div>`;
+  for (const e of (s.events||[])) {
+    if (e.kind === 'like') { html += `<div class="e-like"><span class=tag>点赞</span>${esc(e.nick||'')}</div>`; continue; }
+    let txt = `<span class=tag>${kindName[e.kind]||e.kind}</span><b>${esc(e.nick)}</b>`;
+    if (e.kind === 'chat') txt += ' ' + esc(e.content);
+    if (e.kind === 'gift') txt += ' 送出 ' + esc(e.gift||'礼物') + (e.count>1 ? (' ×'+e.count) : '');
+    if (e.kind === 'badge') txt += ' ' + esc(e.content||'点亮灯牌');
+    html += `<div class="e-${e.kind}">${txt}</div>`;
+  }
+  feed.innerHTML = html || '<div style="color:var(--dim)">暂无互动</div>';
+  $('log').innerHTML = (s.log||[]).slice(-60).map(esc).join('<br>');
+  $('btnPause').textContent = s.paused ? '继续' : '暂停';
+  $('btnPause').className = s.paused ? '' : 'warn';
+  if (s.session) $('acctInfo').textContent = '登录名 ' + s.session.username + '（这台设备空闲 ' + s.session.idle_s + ' 秒后会自动停止；当前在线 ' + s.session.online_users + ' 人）';
+  if (autoPlay) {
+    const floor = (typeof s.play_start_chunk === 'number') ? s.play_start_chunk : 0;
+    if (playedThrough < floor) playedThrough = floor;
+    drainAudio(s.chunks);
+  }
+}
+
+/* ---------------- 自动播放按钮（刷新后继续） ---------------- */
+function setAutoPlay(on) {
+  autoPlay = on;
+  localStorage.setItem('airadio_autoplay', on ? '1' : '0');
+  $('playBtn').textContent = on ? '⏸ 停止自动播放' : '▶ 开始连续播放（外放）';
+  if (!on) { stopAudioQueue(); return; }
+  armAutoplay();
+}
+async function armAutoplay() {
+  if (!autoPlay) return;
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    if (audioCtx.state === 'suspended') { toast('浏览器要求你先点一下页面才允许出声：点任意位置即可继续'); return; }
+    const r = await api('/api/state');
+    if (!r.ok) return;                       // 电台已停：等用户重新开始，不报错
+    const s = await r.json();
+    playedThrough = s.chunks;                 // 刷新后从"现在"接播，不重播整轮历史
+    epochSeen = s.playback_epoch; nextStartAt = 0;
+    render(s);
+  } catch (e) { return; }
+}
+$('playBtn').onclick = () => setAutoPlay(!autoPlay);
+document.addEventListener('click', () => { if (autoPlay && audioCtx && audioCtx.state === 'suspended') armAutoplay(); });
+
+/* ---------------- 播放控制 ---------------- */
+$('btnPause').onclick = () => act('btnPause', '暂停/继续', async () => {
   const s = await (await api('/api/state')).json();
   await postJSON('/api/control', {action: s.paused ? 'resume' : 'pause'});
+  if (!s.paused) stopAudioQueue();
   getState(); return s.paused ? '已继续播放' : '已暂停（再点一次继续）';
 });
 $('btnSkip').onclick = () => act('btnSkip', '跳句', async () => {
-  await postJSON('/api/control', {action: 'skip'}); getState(); return '已跳过当前句';
+  stopAudioQueue();
+  await postJSON('/api/control', {action: 'skip'});
+  getState(); return '已跳过当前句';
 });
 $('btnRewind').onclick = () => act('btnRewind', '从头重播', async () => {
-  await postJSON('/api/control', {action: 'rewind'}); getState(); return '已从头重播（走缓存，不再请求百炼）';
+  stopAudioQueue();                        // 先本地清空：否则浏览器还在播已排好的后面几段
+  playedThrough = 0; nextStartAt = 0;
+  await postJSON('/api/control', {action: 'rewind'});
+  getState(); return '已从头重播（走缓存，不再请求百炼）';
 });
 $('btnRoom').onclick = () => act('btnRoom', '切房', async () => {
   const v = $('roomInput').value.trim(); if (!v) throw new Error('请输入直播间号');
-  await postJSON('/api/room', {room: v}); $('roomInput').value = ''; getState();
-  return '正在连接直播间 ' + v;
+  await postJSON('/api/room', {room: v}); $('roomInput').value = '';
+  localStorage.setItem('airadio_room', v); getState(); return '正在连接直播间 ' + v;
 });
+
+/* ---------------- 稿子 ---------------- */
 $('btnLoadScript').onclick = () => act('btnLoadScript', '载入稿', async () => {
-  const d = await (await api('/api/script')).json(); $('scriptBox').value = d.text;
+  const d = await (await api('/api/script')).json();
+  $('scriptBox').value = d.text; $('libTitle').value = d.title || '';
   return '已载入当前稿';
 });
 $('btnSaveScript').onclick = () => act('btnSaveScript', '保存稿', async () => {
-  const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: false});
-  return '已保存 ' + d.sentences + ' 句，本轮播完后生效';
+  const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: false, title: $('libTitle').value.trim()});
+  return '已保存 ' + d.sentences + ' 段，本轮播完后生效';
 });
 $('btnSaveNow').onclick = () => act('btnSaveNow', '保存并播放', async () => {
-  const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: true});
-  getState(); return '已生效 ' + d.sentences + ' 句，从头开始播';
+  const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: true, title: $('libTitle').value.trim()});
+  stopAudioQueue(); playedThrough = 0;
+  getState(); return '已生效 ' + d.sentences + ' 段，从头开始播';
 });
 $('btnSaveToLib').onclick = () => act('btnSaveToLib', '存进稿子库', async () => {
-  const text = $('scriptBox').value.trim();
-  if (!text) throw new Error('稿子框是空的');
+  const text = $('scriptBox').value.trim(); if (!text) throw new Error('稿子框是空的');
   const d = await postJSON('/api/library/save', {title: $('libTitle').value.trim() || '未命名稿', text});
-  loadLibrary(); $('libTitle').value = '';
-  return '已存进稿子库：' + d.sentences + ' 句';
+  loadLibrary(); return '已存进稿子库：' + d.sentences + ' 段';
 });
-// ---- 稿子库 ----
-let libCache = {topics: [], scripts: []};
+let libCache = {scripts: []};
 async function loadLibrary() {
-  const d = await (await api('/api/library')).json();
-  libCache = d;
-  renderScripts();
+  try { libCache = await (await api('/api/library')).json(); } catch (e) { return; }
+  renderScripts(); fillStartScriptOptions();
 }
 function renderScripts() {
   $('scriptList').innerHTML = (libCache.scripts || []).map(s =>
-    `<div class="srow"><div class="stitle">${esc(s.title)}<div class="smeta">${s.sentences} 句 · ${esc(s.source)} · ${new Date(s.created*1000).toLocaleDateString()}</div></div>` +
+    `<div class="srow"><div class="stitle">${esc(s.title)}<div class="smeta">${s.sentences} 段 · ${esc(s.source)}</div></div>` +
     `<button class="ghost" data-load="${s.id}">载入</button><button data-use="${s.id}">播放这稿</button><button class="ghost" data-del="${s.id}">删</button></div>`
-  ).join('') || '<div style="color:var(--dim);font-size:13px;padding:8px 0">稿子库为空。可在上面写稿后点「存进稿子库」，或上传 .txt 稿子。</div>';
+  ).join('') || '<div style="color:var(--dim);font-size:13px;padding:8px 0">稿子库为空。可在上面写稿后点「存进稿子库」，或上传 .txt。</div>';
   for (const b of $('scriptList').querySelectorAll('button')) {
     if (b.dataset.load) b.onclick = () => act(null, '载入稿', async () => {
       const s = libCache.scripts.find(x => x.id === b.dataset.load);
-      $('scriptBox').value = s.text; $('libTitle').value = s.title;
+      $('scriptBox').value = s.text; $('libTitle').value = s.title; showTab('script');
       return '已载入「' + s.title + '」到编辑框（还没生效）';
     });
     if (b.dataset.use) b.onclick = () => act(null, '播放这稿', async () => {
       const d = await postJSON('/api/library/use', {id: b.dataset.use, apply_now: true});
-      getState(); return '已切到「' + d.title + '」，' + d.sentences + ' 句，从头播';
+      stopAudioQueue(); playedThrough = 0; getState(); return '已切到「' + d.title + '」，' + d.sentences + ' 段，从头播';
     });
     if (b.dataset.del) b.onclick = () => act(null, '删除', async () => {
       await postJSON('/api/library/script_delete', {id: b.dataset.del}); loadLibrary(); return '已删除该稿';
@@ -481,160 +509,22 @@ function renderScripts() {
   }
 }
 $('btnUploadScript').onclick = () => act('btnUploadScript', '上传稿子', async () => {
-  const f = $('scriptFile').files[0];
-  if (!f) throw new Error('先选择一个 .txt 稿子文件');
-  const text = await f.text();
-  if (!text.trim()) throw new Error('文件是空的');
+  const f = $('scriptFile').files[0]; if (!f) throw new Error('先选择一个 .txt 稿子文件');
+  const text = await f.text(); if (!text.trim()) throw new Error('文件是空的');
   const title = $('uploadTitle').value.trim() || f.name.replace(/\.txt$/i, '');
   const d = await postJSON('/api/library/save', {title, text, source: '上传文件'});
-  await loadLibrary();
-  $('uploadTitle').value = ''; $('scriptFile').value = '';
-  return '已上传「' + title + '」' + d.sentences + ' 句，进稿子库（可点播放这稿或开轮换）';
+  await loadLibrary(); $('uploadTitle').value = ''; $('scriptFile').value = '';
+  return '已上传「' + title + '」' + d.sentences + ' 段';
 });
 
-function parseKw(id) {
-  const v = $(id).value.trim();
-  if (!v) return undefined;
-  const a = v.split(',').map(x => parseFloat(x));
-  return (a.length === 2 && isFinite(a[0]) && isFinite(a[1])) ? a : undefined;
-}
-$('btnParams').onclick = () => act('btnParams', '应用参数', async () => {
-  const w = $('windowInput').value.split(',').map(x=>parseFloat(x));
-  const pkw = {};
-  for (const k of ['gift','chat','badge','follow','member','like']) {
-    const v = parseKw('kw_' + k);
-    if (v) pkw[k] = v;
-  }
-  const pf = parseInt($('prefetchInput').value);
-  const mg = parseInt($('mergeInput').value);
-  const gp = parseInt($('gapInput').value);
-  await postJSON('/api/params', {model: $('modelSel').value, voice: $('voiceSel').value,
-    rate: parseFloat($('rateInput').value),
-    min_gap: parseFloat($('minGapInput').value),
-    window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined,
-    per_kind_windows: Object.keys(pkw).length ? pkw : undefined,
-    prefetch_ahead: isFinite(pf) ? pf : undefined,
-    merge_sentences: isFinite(mg) ? mg : undefined,
-    sentence_gap_ms: isFinite(gp) ? gp : undefined,
-    trim_silence: $('trimChk').checked});
-  getState(); return '参数已生效（改音色/语速会让旧缓存失效，按需重新合成）';
-});
-// ---- 预生成 ----
-$('btnPrefetchN').onclick = () => act('btnPrefetchN', '预生成', async () => {
-  const n = parseInt($('prefetchInput').value);
-  if (!isFinite(n) || n < 1) throw new Error('先在输入框填要预生成的句数（1–20）');
-  const d = await postJSON('/api/prefetch', {limit: n});
-  getState(); return d.queued ? ('已排队预生成 ' + d.queued + ' 句') : '这些句子都已就绪，无需再生成';
-});
-$('btnPrefetchAll').onclick = () => act('btnPrefetchAll', '预生成整稿', async () => {
-  const d = await postJSON('/api/prefetch', {limit: 'all'});
-  getState(); return d.queued ? ('已排队预生成整稿 ' + d.queued + ' 句') : '整稿音频都已就绪，循环将零请求';
-});
-// ---- 百炼 Key ----
-$('btnApiKey').onclick = () => act('btnApiKey', '保存 Key', async () => {
-  const key = $('apiKeyInput').value.trim();
-  if (!key) throw new Error('Key 不能为空');
-  await postJSON('/api/api_key', {key});
-  $('apiKeyInput').value = ''; $('apiKeyHint').textContent = '';
-  loadVoiceCatalog(); getState(); return 'Key 已保存，音色与合成即刻可用';
-});
-
-// ---- 录音 / 选文件 → 生成新音色 ----
-let mediaStream = null, recorder = null, recChunks = [], recMime = '', recStart = 0;
-const canMic = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
-if (!canMic) $('btnMic').textContent = '🎙 浏览器不支持录音，用下方选文件';
-$('btnMic').onclick = async () => {
-  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
-  try {
-    mediaStream = await navigator.mediaDevices.getUserMedia({audio: true});
-  } catch (e) {
-    $('cloneHint').textContent = '无法用麦克风（非 HTTPS 或权限被拒）：录一段存成文件再用右侧“选择音频文件”。';
-    return;
-  }
-  const tries = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
-  recMime = tries.find(t => MediaRecorder.isTypeSupported(t)) || '';
-  recorder = new MediaRecorder(mediaStream, recMime ? {mimeType: recMime} : undefined);
-  recChunks = [];
-  recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
-  recorder.onstop = () => {
-    mediaStream.getTracks().forEach(t => t.stop());
-    const secs = Math.round((Date.now() - recStart) / 1000);
-    $('micTimer').textContent = '';
-    $('btnMic').textContent = '🎙 录10–20秒';
-    window._recBlob = new Blob(recChunks, {type: recMime || 'audio/webm'});
-    window._recFmt = (recMime || 'audio/webm').split(';')[0].split('/')[1] || 'webm';
-    $('cloneHint').textContent = `已录 ${secs}s，${window._recBlob ? (window._recBlob.size/1024|0)+'KB' : '空'} → 填个音色名后点“生成新音色”`;
-  };
-  recStart = Date.now(); recChunks = [];
-  recorder.start();
-  $('btnMic').textContent = '⏹ 停止录音';
-  const iv = setInterval(() => {
-    if (!recorder || recorder.state !== 'recording') { clearInterval(iv); $('micTimer').textContent=''; return; }
-    const secs = Math.round((Date.now() - recStart) / 1000);
-    $('micTimer').textContent = secs + 's' + (secs >= 15 ? '（够了，可停）' : '');
-  }, 1000);
-};
-$('voiceFile').onchange = () => {
-  const f = $('voiceFile').files[0]; if (!f) return;
-  const rd = new FileReader();
-  rd.onload = () => {
-    window._recBlob = null;
-    window._recB64 = String(rd.result).split(',',2)[1] || '';
-    const ext = (f.name.split('.').pop() || 'webm').toLowerCase();
-    window._recFmt = ext === 'mpeg' ? 'mp3' : ext;
-    $('cloneHint').textContent = `已选文件 ${f.name} (${(f.size/1024|0)}KB) → 填个音色名后点“生成新音色”`;
-  };
-  rd.readAsDataURL(f);
-};
-async function applyCloneResult(d) {
-  await loadVoiceCatalog();
-  $('voiceSel').value = d.voice_id;
-  try {
-    const r = await api('/api/preview_voice', {voice: d.voice_id, model: d.target_model,
-      text: $('voicePreview').value.trim() || '大家好，这是新的音色，欢迎来到直播间。'});
-    if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
-  } catch (e) {}
-  $('cloneHint').textContent = '新音色已生成并选中（' + d.target_model + '）：' + d.voice_id
-    + '　→ 想马上用它播稿，点上面「应用参数」';
-}
-$('btnClone').onclick = () => act('btnClone', '生成音色', async () => {
-  const prefix = $('voicePrefix').value.trim().toLowerCase();
-  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位（如 xiangge01）');
-  let payload = {prefix};
-  if (window._recB64) { payload.audio_base64 = window._recB64; payload.format = window._recFmt; }
-  else if (window._recBlob && window._recBlob.size) {
-    const buf = await window._recBlob.arrayBuffer();
-    let bin = '', u = new Uint8Array(buf);
-    for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
-    payload.audio_base64 = btoa(bin); payload.format = window._recFmt || 'webm';
-  } else throw new Error('先录音或选择音频文件（安静环境连续说 10–20 秒）');
-  $('cloneHint').textContent = '生成中…（会先本地检查录音时长）';
-  const d = await postJSON('/api/clone_voice', payload);
-  await applyCloneResult(d);
-  return '录音音色已生成，已自动选中并试听';
-});
-$('btnDesignVoice').onclick = () => act('btnDesignVoice', '生成音色', async () => {
-  const prompt = $('voicePrompt').value.trim();
-  if (prompt.length < 5) throw new Error('先写音色描述（性别/年龄/语气/用途）');
-  const prefix = ($('voicePrefix').value.trim() || 'voice' + Math.floor(Math.random()*900+100)).toLowerCase();
-  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位');
-  const payload = {prefix, prompt, preview_text: $('voicePreview').value.trim()};
-  $('cloneHint').textContent = '按提示词生成中…';
-  const d = await postJSON('/api/clone_voice', payload);
-  await applyCloneResult(d);
-  return '提示词音色已生成，已自动选中并试听';
-});
-
+/* ---------------- 音色 ---------------- */
 let MODEL_CATALOG = [];
 async function loadVoiceCatalog() {
-  const r = await api('/api/models'); const d = await r.json();
+  const d = await (await api('/api/models')).json();
   MODEL_CATALOG = d.models || [];
   const ms = $('modelSel');
   if (!ms.options.length) {
-    for (const m of MODEL_CATALOG) {
-      const o = document.createElement('option'); o.value = m.model;
-      o.textContent = m.label; ms.appendChild(o);
-    }
+    for (const m of MODEL_CATALOG) { const o = document.createElement('option'); o.value = m.model; o.textContent = m.label; ms.appendChild(o); }
     ms.onchange = () => fillVoiceOptions();
   }
   ms.value = d.current.model || (MODEL_CATALOG[0] || {}).model || '';
@@ -649,129 +539,316 @@ function fillVoiceOptions(keep) {
     o.textContent = v.voice + '（' + v.name + '·' + v.trait + '）'; vs.appendChild(o);
   }
   if (info.needs_custom_voice || !(info.system_voices || []).length) {
-    const o = document.createElement('option'); o.value = ''; o.dataset.empty = '1';
-    o.textContent = '（这个模型没有系统音色：先用提示词或录音生成音色）'; vs.appendChild(o);
+    const o = document.createElement('option'); o.value = ''; o.textContent = '（这个模型没有系统音色：先用提示词或录音生成音色）'; vs.appendChild(o);
   }
   loadClonedVoices(model, keep);
 }
 async function loadClonedVoices(model, keep) {
   try {
-    const r = await api('/api/voices?model=' + encodeURIComponent(model)); const d = await r.json();
-    const vs = $('voiceSel');
-    const first = vs.querySelector('option');
+    const d = await (await api('/api/voices?model=' + encodeURIComponent(model))).json();
+    const vs = $('voiceSel'); const first = vs.querySelector('option');
     for (const v of (d.voices || [])) {
       if ((v.voice_id || '').length < 4) continue;
-      const o = document.createElement('option'); o.value = v.voice_id; o.dataset.cloned = '1';
+      const o = document.createElement('option'); o.value = v.voice_id;
       o.textContent = '🎙 自建 ' + v.voice_id + (v.status && v.status !== 'READY' ? '（' + v.status + '）' : '');
       vs.insertBefore(o, first);
     }
     if (keep) vs.value = keep;
   } catch (e) {}
 }
-
+$('btnSaveVoice').onclick = () => act('btnSaveVoice', '保存音色', async () => {
+  await postJSON('/api/params', {model: $('modelSel').value, voice: $('voiceSel').value, rate: parseFloat($('rateInput').value)});
+  getState(); return '模型/音色/语速已保存（换音色会让旧音频缓存失效，按需重新合成）';
+});
+$('btnApiKey').onclick = () => act('btnApiKey', '保存 Key', async () => {
+  const key = $('apiKeyInput').value.trim(); if (!key) throw new Error('Key 不能为空');
+  await postJSON('/api/api_key', {key}); $('apiKeyInput').value = ''; $('apiKeyHint').textContent = '';
+  loadVoiceCatalog(); getState(); return 'Key 已保存，音色与合成即刻可用';
+});
 $('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
   const text = $('ttsTestInput').value.trim(); if (!text) throw new Error('先输入试听文字');
   const r = await api('/api/tts_test', {text});
   if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || '合成失败'); }
   const blob = await r.blob(); new Audio(URL.createObjectURL(blob)).play();
-  return '试听音频已生成（' + Math.round(blob.size/1024) + 'KB）';
+  return '试听已生成（' + Math.round(blob.size/1024) + 'KB）';
 });
 
-// ---- 互动话术（每类多条随机）+ 昵称规则 + 随机报时 ----
-const PHRASE_KINDS = [
-  ['gift', '礼物'], ['chat', '弹幕'], ['badge', '灯牌/粉丝团'],
-  ['follow', '关注'], ['member', '进场'], ['like', '点赞'],
-];
-let phraseLoaded = null;
+let mediaStream = null, recorder = null, recChunks = [], recMime = '', recStart = 0;
+if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) $('btnMic').textContent = '🎙 浏览器不支持录音，用选文件';
+$('btnMic').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  try { mediaStream = await navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch (e) { $('cloneHint').textContent = '无法用麦克风（非 HTTPS 或权限被拒）：录一段存成文件再选文件。'; return; }
+  const tries = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/ogg;codecs=opus'];
+  recMime = tries.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  recorder = new MediaRecorder(mediaStream, recMime ? {mimeType: recMime} : undefined);
+  recChunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    mediaStream.getTracks().forEach(t => t.stop());
+    const secs = Math.round((Date.now() - recStart)/1000);
+    $('micTimer').textContent = ''; $('btnMic').textContent = '🎙 录10–20秒';
+    window._recBlob = new Blob(recChunks, {type: recMime || 'audio/webm'});
+    window._recFmt = (recMime || 'audio/webm').split(';')[0].split('/')[1] || 'webm';
+    $('cloneHint').textContent = `已录 ${secs}s → 填音色名后点「用录音生成」`;
+  };
+  recStart = Date.now(); recChunks = []; recorder.start();
+  $('btnMic').textContent = '⏹ 停止录音';
+  const iv = setInterval(() => {
+    if (!recorder || recorder.state !== 'recording') { clearInterval(iv); $('micTimer').textContent=''; return; }
+    const secs = Math.round((Date.now()-recStart)/1000);
+    $('micTimer').textContent = secs + 's' + (secs >= 15 ? '（够了，可停）' : '');
+  }, 1000);
+};
+$('voiceFile').onchange = () => {
+  const f = $('voiceFile').files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    window._recBlob = null; window._recB64 = String(rd.result).split(',',2)[1] || '';
+    const ext = (f.name.split('.').pop() || 'webm').toLowerCase();
+    window._recFmt = ext === 'mpeg' ? 'mp3' : ext;
+    $('cloneHint').textContent = `已选文件 ${f.name} → 填音色名后点「用录音生成」`;
+  };
+  rd.readAsDataURL(f);
+};
+async function applyCloneResult(d) {
+  await loadVoiceCatalog();
+  $('voiceSel').value = d.voice_id;
+  try {
+    const r = await api('/api/preview_voice', {voice: d.voice_id, model: d.target_model,
+      text: $('voicePreview').value.trim() || '大家好，这是新的音色，欢迎来到直播间。'});
+    if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
+  } catch (e) {}
+  $('cloneHint').textContent = '新音色已生成并选中（' + d.target_model + '）：' + d.voice_id + '　→ 点上面「保存模型/语速」立刻用它播稿';
+}
+$('btnClone').onclick = () => act('btnClone', '生成音色', async () => {
+  const prefix = ($('voicePrefix').value.trim() || 'v' + Date.now().toString(36).slice(-6)).toLowerCase();
+  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位');
+  let payload = {prefix};
+  if (window._recB64) { payload.audio_base64 = window._recB64; payload.format = window._recFmt; }
+  else if (window._recBlob && window._recBlob.size) {
+    const buf = await window._recBlob.arrayBuffer(); let bin = ''; const u = new Uint8Array(buf);
+    for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
+    payload.audio_base64 = btoa(bin); payload.format = window._recFmt || 'webm';
+  } else throw new Error('先录音或选择音频文件（安静环境连续说 10–20 秒）');
+  $('cloneHint').textContent = '生成中…（会先本地检查录音时长）';
+  const d = await postJSON('/api/clone_voice', payload);
+  await applyCloneResult(d); return '录音音色已生成，已选中并试听';
+});
+$('btnDesignVoice').onclick = () => act('btnDesignVoice', '生成音色', async () => {
+  const prompt = $('voicePrompt').value.trim();
+  if (prompt.length < 5) throw new Error('先写音色描述（性别/年龄/语气/用途）');
+  const prefix = ($('voicePrefix').value.trim() || 'vd' + Date.now().toString(36).slice(-6)).toLowerCase();
+  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位');
+  $('cloneHint').textContent = '按提示词生成中…';
+  const d = await postJSON('/api/clone_voice', {prefix, prompt, preview_text: $('voicePreview').value.trim()});
+  await applyCloneResult(d); return '提示词音色已生成，已选中并试听';
+});
+
+/* ---------------- 话术 ---------------- */
+const PHRASE_KINDS = [['gift','礼物'],['chat','弹幕'],['badge','灯牌/粉丝团'],['follow','关注'],['member','进场'],['like','点赞']];
 async function loadPhrases() {
-  const [pr, ph] = await Promise.all([api('/api/phrases').then(r => r.json()),
-                                     api('/api/placeholders').then(r => r.json())]);
-  phraseLoaded = pr;
+  const [pr, ph] = await Promise.all([api('/api/phrases').then(r=>r.json()), api('/api/placeholders').then(r=>r.json())]);
   const chips = $('phChips'); chips.innerHTML = '';
   for (const p of (ph.placeholders || [])) {
-    const b = document.createElement('button'); b.className = 'ghost'; b.type = 'button';
-    b.style.cssText = 'padding:6px 10px;min-height:auto;font-size:12px';
-    b.textContent = p.token;
-    b.title = p.desc + '　例：' + p.example;
-    b.onclick = () => insertPlaceholder(p.token);
-    chips.appendChild(b);
+    const b = document.createElement('button'); b.className='ghost'; b.type='button'; b.textContent = p.token;
+    b.title = p.desc + '　例：' + p.example; b.onclick = () => insertPlaceholder(p.token); chips.appendChild(b);
   }
-  $('phHint').textContent = '占位符说明（悬停看例子）：' + (ph.examples || []).map(e => e.result).join(' ／ ');
+  $('phHint').textContent = '占位符（悬停看例子）：' + (ph.examples || []).map(e => e.result).join(' ／ ');
   const box = $('phraseEditors'); box.innerHTML = '';
   const tpls = pr.templates || {};
   for (const [kind, label] of PHRASE_KINDS) {
-    const labelEl = document.createElement('label');
-    labelEl.style.marginTop = '8px';
-    labelEl.textContent = label + ' 话术（一行一条，随机播）';
-    box.appendChild(labelEl);
-    const ta = document.createElement('textarea');
-    ta.id = 'ph_' + kind; ta.dataset.kind = kind; ta.className = 'phrase-ta';
-    ta.style.cssText = 'width:100%;min-height:76px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px';
-    ta.value = (tpls[kind] || []).join('\n');
-    box.appendChild(ta);
+    const lb = document.createElement('label'); lb.style.marginTop='8px'; lb.textContent = label + ' 话术（一行一条，随机播）'; box.appendChild(lb);
+    const ta = document.createElement('textarea'); ta.id = 'ph_' + kind;
+    ta.style.cssText='width:100%;min-height:72px;font-size:13px'; ta.value = (tpls[kind]||[]).join('\n'); box.appendChild(ta);
   }
   $('nickHanChk').checked = pr.nick_han_only !== false;
   $('nickMaxInput').value = pr.nick_max_chars != null ? pr.nick_max_chars : 8;
   $('announceChk').checked = !!pr.announce_time;
-  const iv = pr.announce_interval_s || [900, 1800];
+  const iv = pr.announce_interval_s || [900,1800];
   $('annMinInput').value = Math.round(iv[0]); $('annMaxInput').value = Math.round(iv[1]);
-  $('timePhrases').value = (pr.time_templates || []).join('\n');
-  $('fallbackPhrases').value = (pr.fallback_templates || []).join('\n');
-  $('phraseHint').textContent = '上次保存的话术已载入（存在 data/library.json，重启也在）。改了不保存不会生效。';
+  $('timePhrases').value = (pr.time_templates||[]).join('\n');
+  $('fallbackPhrases').value = (pr.fallback_templates||[]).join('\n');
+  $('phraseHint').textContent = '话术存在你自己的账号目录里，重启也在。改了不保存不会生效。';
 }
 function insertPlaceholder(token) {
   const ta = document.activeElement;
-  if (!ta || ta.tagName !== 'TEXTAREA') { toast('先点进要插入的话术框里，再点占位符'); return; }
+  if (!ta || ta.tagName !== 'TEXTAREA') { toast('先点进要插入的话术框，再点占位符'); return; }
   const pos = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
-  ta.value = ta.value.slice(0, pos) + token + ta.value.slice(pos);
+  ta.value = ta.value.slice(0,pos) + token + ta.value.slice(pos);
   ta.focus(); ta.selectionStart = ta.selectionEnd = pos + token.length;
 }
-function linesOf(id) {
-  return ($(id).value || '').split('\n').map(s => s.trim()).filter(Boolean);
-}
+const linesOf = (id) => ($(id).value || '').split('\n').map(s=>s.trim()).filter(Boolean);
 $('btnSavePhrases').onclick = () => act('btnSavePhrases', '保存话术', async () => {
   const templates = {};
   for (const [kind] of PHRASE_KINDS) { const v = linesOf('ph_' + kind); if (v.length) templates[kind] = v; }
-  const body = {
-    templates,
-    nick_han_only: $('nickHanChk').checked,
-    nick_max_chars: parseInt($('nickMaxInput').value),
-    announce_time: $('announceChk').checked,
-    announce_interval_s: [parseInt($('annMinInput').value), parseInt($('annMaxInput').value)],
-    time_templates: linesOf('timePhrases'),
-    fallback_templates: linesOf('fallbackPhrases'),
-  };
+  const body = { templates, nick_han_only: $('nickHanChk').checked, nick_max_chars: parseInt($('nickMaxInput').value),
+                 announce_time: $('announceChk').checked,
+                 announce_interval_s: [parseInt($('annMinInput').value), parseInt($('annMaxInput').value)],
+                 time_templates: linesOf('timePhrases'), fallback_templates: linesOf('fallbackPhrases') };
   if (!isFinite(body.nick_max_chars)) delete body.nick_max_chars;
   if (!isFinite(body.announce_interval_s[0]) || !isFinite(body.announce_interval_s[1])) delete body.announce_interval_s;
   const d = await postJSON('/api/phrases', body);
   await loadPhrases();
-  const n = Object.values(templates).reduce((a, v) => a + v.length, 0);
-  return '话术已保存并立即生效：互动话术 ' + n + ' 条、报时话术 ' + body.time_templates.length
-         + ' 条（' + (body.announce_time ? '随机报时开' : '随机报时关') + '）';
+  const n = Object.values(templates).reduce((a,v)=>a+v.length,0);
+  return '话术已保存并立即生效：互动 ' + n + ' 条、报时 ' + body.time_templates.length + ' 条（报时' + (body.announce_time?'开':'关') + '）';
 });
 $('btnReloadPhrases').onclick = () => act('btnReloadPhrases', '载入话术', async () => { await loadPhrases(); return '已重新载入服务器上的话术'; });
 
-// 初始化参数输入框（从 state 拉当前值）
-(async () => { const r=await api('/api/state'); const s=await r.json();
-  $('rateInput').value = s.params.rate; $('minGapInput').value = s.params.min_gap;
-  $('windowInput').value = s.params.window.join(',');
-  $('prefetchInput').value = (s.prefetch_ahead != null ? s.prefetch_ahead : 3);
-  $('mergeInput').value = (s.merge_sentences != null ? s.merge_sentences : 2);
-  $('gapInput').value = (s.sentence_gap_ms != null ? s.sentence_gap_ms : 150);
-  $('trimChk').checked = s.trim_silence !== false;
-  await loadVoiceCatalog();
-  if (s.params.model) $('modelSel').value = s.params.model;
-  if (s.params.voice) $('voiceSel').value = s.params.voice;
-  for (const k of ['gift','chat','badge','follow','member','like']) {
-    const v = (s.params.per_kind_windows || {})[k];
-    if (v) $('kw_' + k).value = v.join(',');
+/* ---------------- 插播参数 ---------------- */
+function parseKw(id) {
+  const v = $(id).value.trim(); if (!v) return undefined;
+  const a = v.split(',').map(x => parseFloat(x));
+  return (a.length === 2 && isFinite(a[0]) && isFinite(a[1])) ? a : undefined;
+}
+$('btnParams').onclick = () => act('btnParams', '保存参数', async () => {
+  const w = $('windowInput').value.split(',').map(x=>parseFloat(x));
+  const pkw = {};
+  for (const k of ['gift','chat','badge','follow','member','like']) { const v = parseKw('kw_'+k); if (v) pkw[k] = v; }
+  const body = {
+    min_gap: parseFloat($('minGapInput').value),
+    window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined,
+    per_kind_windows: Object.keys(pkw).length ? pkw : undefined,
+    prefetch_ahead: parseInt($('prefetchInput').value),
+    merge_sentences: parseInt($('mergeInput').value),
+    sentence_gap_ms: parseInt($('gapInput').value),
+    trim_silence: $('trimChk').checked,
+  };
+  for (const k of ['min_gap','prefetch_ahead','merge_sentences','sentence_gap_ms']) if (!isFinite(body[k])) delete body[k];
+  await postJSON('/api/params', body);
+  const cookie = $('dyCookie').value.trim();
+  if (cookie) { const d = await postJSON('/api/douyin_cookie', {cookie}); updateCookieBadge(d); }
+  getState(); return '参数已保存并生效';
+});
+$('btnPrefetchN').onclick = () => act('btnPrefetchN', '预生成', async () => {
+  const n = parseInt($('prefetchInput').value);
+  if (!isFinite(n) || n < 1) throw new Error('先在输入框填要预生成的段数（1–20）');
+  const d = await postJSON('/api/prefetch', {limit: n});
+  getState(); return d.queued ? ('已排队预生成 ' + d.queued + ' 段') : '这些段都已就绪，无需再生成';
+});
+$('btnPrefetchAll').onclick = () => act('btnPrefetchAll', '预生成整稿', async () => {
+  const d = await postJSON('/api/prefetch', {limit: 'all'});
+  getState(); return d.queued ? ('已排队预生成整稿 ' + d.queued + ' 段') : '整稿音频都已就绪，循环将零请求';
+});
+function updateCookieBadge(d) {
+  const el = $('dyBadge');
+  if (!d.cookie_set && d.has_login === undefined) { el.textContent = '未设置'; el.className = 'badge'; return; }
+  if (d.has_login) { el.textContent = d.gift_available === false ? '已设置（重连中…）' : '已登录：有礼物数据'; el.className = 'badge ok'; }
+  else { el.textContent = '已设置但没有登录态（无 sessionid_ss）'; el.className = 'badge err'; }
+}
+async function loadCookie() {
+  try { const d = await (await api('/api/douyin_cookie')).json(); updateCookieBadge(d); } catch (e) {}
+}
+$('btnClearCookie').onclick = () => act('btnClearCookie', '清除 Cookie', async () => {
+  $('dyCookie').value = '';
+  const d = await postJSON('/api/douyin_cookie', {cookie: ''});
+  updateCookieBadge({cookie_set:false, has_login:false});
+  return '已清除（不采礼物；其他互动照常）';
+});
+
+/* ---------------- 账号 ---------------- */
+$('btnLogout').onclick = () => act('btnLogout', '退出', async () => {
+  await postJSON('/api/logout', {}); localStorage.removeItem('airadio_autoplay');
+  location.href = '/'; return '已退出';
+});
+$('btnStopSession').onclick = () => act('btnStopSession', '停止电台', async () => {
+  stopAudioQueue(); setAutoPlay(false);
+  const d = await postJSON('/api/leave', {});
+  $('status').innerHTML = '<b class=warn>' + (d.ok ? '这个电台已停止' : '本来就没有在跑的电台') + '</b>，点「开始新直播」重新开始';
+  return '已停止这个电台（不占后台）';
+});
+$('btnChangePw').onclick = () => act('btnChangePw', '改密码', async () => {
+  await postJSON('/api/password', {old: $('pwOld').value, new: $('pwNew').value});
+  $('pwOld').value = ''; $('pwNew').value = ''; return '密码已更新';
+});
+$('btnReloadLog').onclick = () => act('btnReloadLog', '刷新日志', async () => { logBuf = []; logCursor = 0; getState(); return '已重新拉取日志'; });
+
+/* ---------------- 开播向导 ---------------- */
+function fillStartScriptOptions() {
+  const sel = $('startScript'); sel.innerHTML = '';
+  const o0 = document.createElement('option'); o0.value = '__default__'; o0.textContent = '默认稿（服务端准备的这套）'; sel.appendChild(o0);
+  for (const s of (libCache.scripts || [])) { const o = document.createElement('option'); o.value = s.id; o.textContent = s.title + '（' + s.sentences + ' 段）'; sel.appendChild(o); }
+  const o1 = document.createElement('option'); o1.value = '__paste__'; o1.textContent = '粘贴新稿'; sel.appendChild(o1);
+  sel.onchange = () => { $('startPasteWrap').style.display = sel.value === '__paste__' ? 'block' : 'none'; };
+}
+function openStartWizard(msg) {
+  $('startHint').textContent = msg || '';
+  $('startRoom').value = $('roomInput').dataset.room || localStorage.getItem('airadio_room') || '';
+  fillStartScriptOptions();
+  $('startModal').classList.add('on');
+}
+function closeStartWizard() { $('startModal').classList.remove('on'); }
+$('btnStart').onclick = () => openStartWizard();
+$('btnStartCancel').onclick = closeStartWizard;
+async function startShow(skipVoice) {
+  const room = $('startRoom').value.trim();
+  if (!room) throw new Error('要填直播间号');
+  const sel = $('startScript').value;
+  const payload = {room, skip_voice: skipVoice};
+  if (sel === '__paste__') { payload.text = $('startPaste').value; payload.title = '粘贴稿 ' + new Date().toLocaleDateString(); }
+  else if (sel !== '__default__') { const s = libCache.scripts.find(x => x.id === sel); if (s) { payload.text = s.text; payload.title = s.title; } }
+  if (!skipVoice) {
+    payload.voice_keyword = $('startVoiceKey').value.trim().toLowerCase();
+    payload.voice_prompt = $('startVoiceDesc').value.trim();
+    payload.model = $('modelSel').value;
   }
-  $('apiKeyHint').textContent = s.api_key_set ? '' : '还没填百炼 API Key：在上方输入框填 sk-… 即可开始合成（无需 .env）。';
-  loadPhrases();
-  loadLibrary();
+  stopAudioQueue(); setAutoPlay(false);
+  const d = await postJSON('/api/start', payload);
+  closeStartWizard();
+  localStorage.setItem('airadio_room', room);
+  epochSeen = null; playedThrough = 0; logBuf = []; logCursor = 0;
+  await loadVoiceCatalog(); await getState();
+  toast('已开始：房间 ' + room + '，' + d.sentences + ' 段' + (d.skipped_voice ? '（沿用现有音色）' : '，新音色 ' + d.voice_id));
+  setAutoPlay(true);
+}
+$('btnStartGo').onclick = () => act('btnStartGo', '开始新直播', () => startShow(false));
+$('btnStartSkip').onclick = () => act('btnStartSkip', '开始新直播', () => startShow(true));
+
+/* ---------------- 启动 ---------------- */
+(async () => {
+  let me;
+  try { me = await (await api('/me')).json(); } catch (e) { return; }
+  if (!me.ok) { gotoLogin(); return; }
+  $('whoBadge').textContent = '👤 ' + me.username + (me.role === 'admin' ? '（管理员）' : '');
+  $('whoBadge').className = 'badge ok';
+  if (me.role === 'admin') { const b = document.createElement('button'); b.className='ghost'; b.style.cssText='min-height:34px;padding:0 10px;font-size:13px'; b.textContent='管理后台'; b.onclick=()=>location.href='/admin'; $('btnStart').after(b); }
+  // 这一场可能已经被自动停止了（页面关过一次）：410 时不读参数，直接引导重新开始
+  let s0 = null;
+  try {
+    const r = await api('/api/state');
+    if (r.status === 410) { const d = await r.json().catch(() => ({})); openStartWizard(d.error || '这一场已经停止了，重新开始就点下面的按钮'); }
+    else if (r.ok) s0 = await r.json();
+    else { openStartWizard('先开始一场直播：填直播间号、选稿、决定这一场的音色。'); }
+  } catch (e) { openStartWizard(); }
+  if (s0) {
+    if (s0.session) $('sessionInfo').textContent = '这台设备空闲 ' + s0.session.idle_stop_s + ' 秒后电台会自动停止；当前同时在线 ' + s0.session.online_users + ' 人。';
+    const p = s0.params || {};
+    $('rateInput').value = p.rate; $('minGapInput').value = p.min_gap;
+    $('windowInput').value = (p.window || []).join(',');
+    $('prefetchInput').value = (s0.prefetch_ahead != null ? s0.prefetch_ahead : 3);
+    $('mergeInput').value = (s0.merge_sentences != null ? s0.merge_sentences : 2);
+    $('gapInput').value = (s0.sentence_gap_ms != null ? s0.sentence_gap_ms : 150);
+    $('trimChk').checked = s0.trim_silence !== false;
+    $('roomInput').dataset.room = (s0.room || {}).web_rid || '';
+    $('idleS').textContent = s0.session ? s0.session.idle_stop_s : me.idle_stop_s; $('idleS2').textContent = $('idleS').textContent;
+    await loadVoiceCatalog();
+    if (p.model) $('modelSel').value = p.model;
+    if (p.voice) $('voiceSel').value = p.voice;
+    for (const k of ['gift','chat','badge','follow','member','like']) {
+      const v = (p.per_kind_windows || {})[k]; if (v) $('kw_'+k).value = v.join(',');
+    }
+    $('apiKeyHint').textContent = s0.api_key_set ? '' : '还没填百炼 API Key：在上面输入框填 sk-… 即可开始合成（不需要 .env）。';
+    if (!s0.chunks) openStartWizard('这一场还没开始：填直播间号、选稿、决定这一场的音色。');
+  } else {
+    $('idleS').textContent = me.idle_stop_s || 90; $('idleS2').textContent = $('idleS').textContent;
+    loadVoiceCatalog().catch(() => {});
+  }
+  // 刷新后恢复自动播放：按钮状态先恢复到"停止自动播放"，出声要等浏览器给一次用户手势
+  if (autoPlay) { $('playBtn').textContent = '⏸ 停止自动播放'; armAutoplay().catch(() => {}); }
+  loadPhrases().catch(() => {}); loadLibrary().catch(() => {}); loadCookie().catch(() => {});
+  setInterval(getState, 2000);
+  getState();
 })();
-setInterval(getState, 2000);
-getState();
 </script>
 </body>
 </html>

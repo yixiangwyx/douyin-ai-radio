@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI电台 · 登录</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<h1>📻 AI电台</h1>
+<div class="card">
+  <div class="status" id="msg" style="color:var(--warn)"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="tabLogin" class="">登录</button>
+    <button id="tabReg" class="ghost">注册新账号</button>
+  </div>
+  <div id="paneLogin">
+    <label>用户名</label><input id="u" autocomplete="username">
+    <label>密码</label><input id="p" type="password" autocomplete="current-password">
+    <div class="row" style="margin-top:10px"><button id="btnLogin" style="flex:1">登录</button></div>
+    <div class="hint">管理员账号在 <b>/admin</b> 里审批：新注册的账号要等管理员批准后才能用；被停用的账号不能登录、也不能使用电台功能。</div>
+  </div>
+  <div id="paneReg" style="display:none">
+    <label>用户名（字母数字下划线，≤32）</label><input id="ru" autocomplete="username">
+    <label>密码（至少 6 位）</label><input id="rp" type="password" autocomplete="new-password">
+    <div class="row" style="margin-top:10px"><button id="btnReg" style="flex:1">提交注册</button></div>
+    <div class="hint">提交后状态是「待审批」，需要管理员在后台点「批准」才能开播。</div>
+  </div>
+</div>
+<div class="card">
+  <b style="font-size:14px">这个系统怎么用</b>
+  <div class="hint" style="margin-top:6px">
+    1. 登录后点「开始新直播」：填直播间号、选这一场的稿、决定这一场的音色（可以生成一个新的，也可以跳过沿用旧的）。<br>
+    2. 页面就是控制台：稿子、话术、昵称规则、随机报时、插播节奏、模型音色都在选项卡里，每页底部都有保存按钮。<br>
+    3. 把这台设备的扬声器放在开播手机旁边，声音就被收进直播间。<br>
+    4. 关掉页面（或 90 秒不请求）这一场会自动停止，不会挂在后台继续跑。
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+<script>
+const q = new URLSearchParams(location.search);
+if (q.get('msg')) $('msg').textContent = q.get('msg');
+$('tabLogin').onclick = () => { $('paneLogin').style.display='block'; $('paneReg').style.display='none'; };
+$('tabReg').onclick = () => { $('paneLogin').style.display='none'; $('paneReg').style.display='block'; };
+async function doLogin() {
+  const r = await api('/api/login', {username: $('u').value.trim(), password: $('p').value});
+  let d = {}; try { d = await r.json(); } catch (e) {}
+  if (!r.ok) { $('msg').textContent = d.error || ('登录失败 HTTP ' + r.status); return; }
+  if (d.role === 'admin') { location.href = '/admin'; return; }
+  location.href = '/';
+}
+$('btnLogin').onclick = () => act('btnLogin', '登录', doLogin);
+$('btnReg').onclick = () => act('btnReg', '注册', async () => {
+  const d = await postJSON('/api/register', {username: $('ru').value.trim(), password: $('rp').value});
+  $('msg').style.color = 'var(--ok)';
+  $('msg').textContent = '已提交：' + d.username + '，状态「待审批」。等管理员在后台批准后就能登录使用了。';
+  $('tabLogin').onclick();
+});
+document.addEventListener('keydown', e => { if (e.key === 'Enter' && $('paneLogin').style.display !== 'none') $('btnLogin').click(); });
+/* 已经登录的人直接进控制台 */
+api('/me').then(r => r.json()).then(d => { if (d.ok) location.href = d.role === 'admin' ? '/admin' : '/'; }).catch(() => {});
+</script>
+</body>
+</html>

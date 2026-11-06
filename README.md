@@ -36,8 +36,19 @@ uv run python -m airadio --room <直播间号> --script scripts/demo_script.txt 
 一条命令起服务，手机连同一 WiFi 浏览器打开 `http://<本机IP>:8010` 就是完整控制台：
 
 ```bash
-uv run python web/console.py --room <直播间号> --port 8010
+uv run python web/console.py --port 8010            # 打开先进登录/注册页；管理后台 /admin
+uv run python web/console.py --port 8010 --idle 90  # 空闲 90 秒无请求 ⇒ 该用户的电台自动停止
 ```
+
+### 多用户 · 登录 · 管理后台
+
+- **每个登录用户一套电台**：自己的直播间、稿子、话术、昵称规则、音色、播放进度、manifest 与日志互不影响（`data/users/<用户名>/`、`out/chunks/<用户名>/`）。两个人同时打开同一地址不再是同一个电台。
+- **注册要审批**：注册后状态是「待审批」，不能登录也不能用任何 API；管理员在 `/admin` 点「批准」后才能用。**「停用」的账号任何 API 都返回 403**（正在跑的电台会被立即踢下线），管理员可重新启用。
+- **管理后台 `/admin`**：管理员账号 `admin`（初始密码由 `--admin-password` 或 `AIRADIO_ADMIN_PASSWORD` 给，可在后台改；密码只存 pbkdf2 哈希，明文不落盘）。后台能：批准/停用/启用/删除账号、给用户重置密码、看当前有几个电台在跑（房间、稿、空闲秒数、TTS 次数/复用次数）并直接停掉某个人的电台。
+- **页面关了就不再挂后台**（三保险）：① 页面关闭/刷新时前端 `fetch('/api/leave', {keepalive:true})` 立刻停；② 服务端回收线程：超过 `--idle` 秒没有任何请求（= 没有心跳）就停掉播放线程和抖音采集；③ 用户可在「我的账号」页手动「立即停止我这个电台」。主动**暂停**的电台不按空闲回收（那是明确要保留，而且它不请求百炼）。
+- **每开一场都问一次音色**：「开始新直播」向导里填直播间号、选稿（默认稿 / 稿子库 / 粘贴新稿），然后**填一个音色关键字生成这一场专属的新音色**（关键字会自动展开成百炼的音色描述：温柔女声 / 沉稳男声 / 明亮有活力 / 平稳讲解…），也可以跳过沿用上次用的音色。
+- **控制台改成选项卡**：`实时互动 / 稿子 / 音色 / 话术 / 插播参数 / 我的账号 / 日志`，每页底部都有各自的**保存按钮**（改了不保存不会生效），上次停留的页签刷新后还在。
+
 
 控制台功能（全部实测可用，API 均有回归验证）：
 
@@ -53,7 +64,7 @@ uv run python web/console.py --room <直播间号> --port 8010
   - 音色**绑定生成时的模型**，不能跨模型复用；换模型要重新生成音色（缓存 key 含模型，旧音频自动失效重生成）。
 - **生成新音色两种方式**：① **只填提示词**（描述性别/年龄/语气/用途）→ 生成 `…-vd-…` 音色，不用录音；② 录你自己的声音（复刻）→ 生成 `…-{prefix}-…`。生成后自动选中并试听；已有自建音色列在音色下拉最上方（🎙 标记）。
   - 录音失败会在**本地先体检**再告诉你原因：录 <4 秒 → "录音只有 x 秒，太短"；录了但几乎没说话 → "听不到说话（有效语音 x 秒）"；`prefix` 必须是**英文小写字母数字且 <10 位**（中文名会被百炼拒）。
-- **播放控制**：随时暂停 / 继续 / 跳当前句 / 从头重播（从头播不再重新请求 TTS，走音频缓存）；切换直播间号。每个按钮点击都有顶部提示条反馈，处理中按钮变灰不可重复点。
+- **播放控制（都是立即生效，不会等当前这句播完）**：暂停 / 继续 / 跳当前句 / 从头重播 / 切直播间。服务端每次重定位都会递增"播放代次"（`playback_epoch` + `play_start_chunk`），浏览器据此**清掉已排好的音频队列并从新位置接播**；服务端的节拍等待改成可被叫停（旧的 `time.sleep()` 要等一整组播完才响应，这就是"点了从头重播还要等半天"的原因）。自动播放开关会记住：刷新页面后继续自动播放，并从当前进度接播（不重播整轮历史）；浏览器要真人点一下才允许出声时会明确提示。每个按钮都有提示条反馈，处理中变灰不可重复点。
 - **预生成控制**：可设"自动提前预生成 N 句"（默认 3，边播边把后面几组先合成好），也可手动"预生成 N 句"或"预生成整稿"。**提交新稿不会一次把整稿提交给百炼**——默认按需合成；点"预生成整稿"才一次合成完，之后循环全程零请求。顶部显示「播放进度 第 x / y 段」和「音频就绪 ready/total」进度条。
 - **音频只生成一次、只下载一次**（服务端变薄、客户端不再重复取字节）：
   - 服务端两层缓存：内存 + 磁盘 `out/chunks/cache/<模型+音色+语速+文本哈希>.mp3`。**重启服务也不再请求百炼**，页面"音频就绪"重启后仍是 19/19（实测重启后 `tts_calls=1`（只有互动插播）、`cache_hits=11`、`disk_cache_hits=11`）。
@@ -131,7 +142,8 @@ uv run python web/console.py --room <直播间号> --port 8010
 
 ## 技术要点
 
-- **互动消息**：抖音网页端直播间的 websocket 协议（webcast/im/push/v2，protobuf + gzip），事件含进场(Social)、关注、点赞、礼物、弹幕。字段号用真实抓包核对（`scripts/sample_frames.json`），协议回归测试在 `tests/test_timeline.py::test_captured_samples_parse`。
+- **互动消息**：抖音网页端直播间的 websocket 协议（webcast/im/push/v2，protobuf + gzip），事件含进场、关注、点赞、礼物、弹幕、灯牌(粉丝团)。字段号用真实抓包核对（`scripts/sample_frames.json`），协议回归测试在 `tests/test_timeline.py::test_captured_samples_parse`。
+- **礼物必须登录**：抖音服务端只向带登录 Cookie（`sessionid_ss`/`sessionid`/`sid_tt`）的连接下发 `WebcastGiftMessage`；游客态只收到弹幕/进场/关注/点赞/灯牌/人数，一条礼物都没有（实测 4 房间 ×40–100s，gift=0）。登录 Cookie 要放在 **WSS 握手的 header**，不是 URL 参数；没有 `need_landing_params`/`x-tt-*` 之类的参数能替代。用法：浏览器登录 live.douyin.com → F12 → Network → 复制任意请求的整行 Cookie → 控制台「抖音登录 Cookie」框或 `--douyin-cookie`/`DOUYIN_COOKIE`。没有它其它互动照常工作。
 - **签名**：webcast 连接需要 sign.js 生成的 signature（`src/airadio/sign.py`，mini-racer 执行 vendor/sign.js），路线与开源 DouyinLiveWebFetcher 一致。
 - **TTS**：dashscope `tts_v2.SpeechSynthesizer`，cosyvoice-v2 流式合成（一次句/插播 = 一次 task），`--voice` 换音色（longxiaochun_v2 女 / longcheng_v2 男等），`--rate` 语速 0.5–2。
 - **离线可开发**：`--sink dry` 不需要百炼 Key，可完整验证采集与调度。
@@ -140,6 +152,7 @@ uv run python web/console.py --room <直播间号> --port 8010
 
 - 抖音 webcast 是网页端逆向协议，非官方 API：抖音改版可能需要更新 room_id 解析或签名脚本（`scripts/capture_frames.py` 可重抓样本回归）。
 - 直播间必须开播中；未开播时程序每 30s 自动重试解析。
+- 一个抖音登录 Cookie 同一时刻只对一个直播间有效：多房间共用同一 Cookie 会被互相踢掉登录态、礼物消失（需要每房间一个账号的 Cookie，或改用浏览器内核）。Cookie 过期或账号被风控的典型现象是「只收到一条礼物之后不再有」。
 - 评论插播默认截断到 40 字（避免长弹幕拖节奏），`ScheduleConfig.chat_max_len` 可调。
 
 ## 目录
@@ -148,6 +161,7 @@ uv run python web/console.py --room <直播间号> --port 8010
 src/airadio/     live.py(采集) timeline.py(编译+调度) tts.py(百炼) orchestrator.py(编排) player.py(输出)
 web/             player.html(手机/浏览器播放页) serve_player.py
 scripts/         demo_script.txt(示例稿) capture_frames.py(抓协议样本)
-tests/           9 项测试：标记语法/调度语义/真实协议样本回归
+                 probe_msg_types.py(游客态能收到哪些消息类型) probe_with_cookie.py(带登录 Cookie 对比)
+tests/           标记语法/调度语义/真实协议样本回归/礼物登录 Cookie 规则(test_gift_cookie.py)
 vendor/          sign.js(签名脚本, 来自 DouyinLiveWebFetcher)
 ```

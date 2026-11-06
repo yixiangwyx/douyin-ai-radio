@@ -107,6 +107,14 @@ class Library:
     def get_runtime(self) -> dict:
         return dict(self.data.get("runtime") or {})
 
+    # ---- 抖音登录 Cookie（有它才有礼物数据；存在该用户目录，不进 Git） ----
+    def save_douyin_cookie(self, cookie: str) -> None:
+        self.data["douyin_cookie"] = (cookie or "").strip()
+        self._save()
+
+    def get_douyin_cookie(self) -> str:
+        return (self.data.get("douyin_cookie") or "").strip()
+
     def snapshot(self) -> dict:
         return {
             "phrases": self.get_phrases(),

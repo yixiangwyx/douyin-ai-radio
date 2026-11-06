@@ -44,22 +44,34 @@ class RoomInfo:
     status: int  # 2=直播中, 4=已结束
     title: str = ""
     ttwid: str = ""
+    logged_in: bool = False   # 带 sessionid_ss 等登录 Cookie ⇒ 才会收到礼物消息
 
 
-def _session() -> requests.Session:
+LOGIN_COOKIE_KEYS = ("sessionid_ss", "sessionid", "sid_tt")
+
+
+def cookie_has_login(cookie: str) -> bool:
+    """浏览器复制来的 Cookie 串里有没有抖音登录态（礼物消息必须要它）。"""
+    return any(f"{k}=" in (cookie or "") for k in LOGIN_COOKIE_KEYS)
+
+
+def _session(login_cookie: str = "") -> requests.Session:
     s = requests.Session()
     s.headers.update({"User-Agent": UA, "Referer": "https://live.douyin.com/"})
     s.cookies.set("__ac_nonce", "0" + uuid.uuid4().hex[:23])
+    if login_cookie:
+        # 用户提供的浏览器 Cookie 直接带上（含登录态），后面的请求与 WSS 都用它
+        s.headers["Cookie"] = login_cookie
     return s
 
 
-def resolve_room(web_rid: str) -> RoomInfo:
+def resolve_room(web_rid: str, login_cookie: str = "") -> RoomInfo:
     """输入抖音直播间号（live.douyin.com/后的数字）或直播间 URL。"""
     m = re.search(r"(\d{5,20})", web_rid)
     if not m:
         raise ValueError(f"无法从 {web_rid!r} 解析直播间号（请输入 live.douyin.com/数字 或纯数字）")
     rid = m.group(1)
-    s = _session()
+    s = _session(login_cookie)
     r = s.get(f"https://live.douyin.com/{rid}", timeout=15)
     # SSR 页面里找真实 room_id（两种渲染格式：普通 JSON 与转义 JSON）
     room_id = None
@@ -82,8 +94,14 @@ def resolve_room(web_rid: str) -> RoomInfo:
     if not room_id:
         # 未开播：把 web_rid 当占位 room_id，由上层轮询重试
         room_id = rid
+    ttwid = s.cookies.get("ttwid", "")
+    if not ttwid and login_cookie:
+        m = re.search(r"ttwid=([^;]+)", login_cookie)
+        ttwid = m.group(1) if m else ""
     return RoomInfo(web_rid=rid, room_id=room_id, status=status,
-                    title=title, ttwid=s.cookies.get("ttwid", ""))
+                    title=title, ttwid=ttwid,
+                    logged_in=cookie_has_login(login_cookie) or
+                    any(c.name in LOGIN_COOKIE_KEYS for c in s.cookies))
 
 
 def build_wss_url(room_id: str, ttwid: str) -> str:
@@ -112,13 +130,22 @@ def build_wss_url(room_id: str, ttwid: str) -> str:
 
 
 class LiveCollector:
-    """后台线程持续采集互动事件到 InteractionQueue。"""
+    """后台线程持续采集互动事件到 InteractionQueue。
 
-    def __init__(self, web_rid: str, queue: InteractionQueue, on_status=None):
+    抖音服务端只向**带登录 Cookie** 的连接下发 WebcastGiftMessage：
+    游客态（只有 ttwid）能收到 弹幕/进场/关注/点赞/灯牌/人数，但一条礼物都没有（实测）。
+    所以想插播"谁送了礼物"，必须在 WSS 握手 header 里带上浏览器复制的 Cookie（含 sessionid_ss）。
+    """
+
+    def __init__(self, web_rid: str, queue: InteractionQueue, on_status=None,
+                 login_cookie: str = ""):
         self.web_rid = web_rid
+        self.login_cookie = (login_cookie or "").strip()
         self.q = queue
         self.on_status = on_status or (lambda s: None)
         self.room: RoomInfo | None = None
+        self.gift_available: bool | None = None   # None=未知, False=没登录 Cookie 所以没礼物
+        self._gift_merge: dict[tuple, tuple] = {}
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self.last_error = ""
@@ -130,10 +157,24 @@ class LiveCollector:
     def stop(self):
         self._stop.set()
 
+    def set_login_cookie(self, cookie: str):
+        """换/更新登录 Cookie（下一次重连生效）。"""
+        self.login_cookie = (cookie or "").strip()
+        if self.room is not None:
+            self.room.logged_in = cookie_has_login(self.login_cookie)
+
+    def _cookie_header(self) -> str:
+        parts = []
+        if self.login_cookie:
+            parts.append(self.login_cookie)
+        elif self.room and self.room.ttwid:
+            parts.append(f"ttwid={self.room.ttwid}")
+        return "; ".join(p.strip("; ") for p in parts if p)
+
     def _run(self):
         while not self._stop.is_set():
             try:
-                self.room = resolve_room(self.web_rid)
+                self.room = resolve_room(self.web_rid, self.login_cookie)
                 if self.room.status != 2:
                     self.on_status("not_live")
                     self._stop.wait(30)
@@ -153,8 +194,12 @@ class LiveCollector:
         import websockets
         async with websockets.connect(
                 url, max_size=None, ping_interval=25, ping_timeout=20,
-                additional_headers={"cookie": f"ttwid={self.room.ttwid}", "user-agent": UA}) as ws:
+                additional_headers={"cookie": self._cookie_header(), "user-agent": UA}) as ws:
             self.on_status("connected")
+            # 没带登录 Cookie 时，连上 60s 还一条礼物都没有 ⇒ 基本可判定是登录态问题
+            # （不是"这房间恰好没人送礼"）。带 Cookie 时收到第一条礼物即置 True。
+            gift_probe_until = time.time() + 60.0
+            logged_in = cookie_has_login(self.login_cookie)
             while not self._stop.is_set():
                 try:
                     msg = await asyncio.wait_for(ws.recv(), timeout=30)
@@ -179,9 +224,17 @@ class LiveCollector:
                                    logId=pf.logId)
                     await ws.send(ack.SerializeToString())
                 for m in resp.messagesList:
+                    if m.method == "WebcastGiftMessage":
+                        self.gift_available = True
                     entry = TYPE_MAP.get(m.method)
                     if not entry:
+                        # 未映射的类型（RoomStats 等）也要参与"60s 内有没有礼物"的判断
+                        if self.gift_available is None and not logged_in and time.time() > gift_probe_until:
+                            self.gift_available = False
                         continue
+                    if self.gift_available is None and not logged_in and time.time() > gift_probe_until:
+                        # 游客态跑了 60s 都没礼物：明确告诉上层「礼物要登录 Cookie」
+                        self.gift_available = False
                     kind, cls = entry
                     pm = cls()
                     try:
@@ -190,7 +243,26 @@ class LiveCollector:
                         continue
                     ev = self._to_event(kind, pm)
                     if ev:
-                        self.q.push(ev)
+                        self._push(ev)
+
+    def _push(self, ev):
+        """同一次送礼抖音会连发多条 GiftMessage（连击/组合，repeat_count 递增）。
+        合并成一条并把数量取最大值，避免一次送礼被插播好几遍。"""
+        if ev.kind == "gift":
+            key = (ev.nick, ev.gift)
+            prev = self._gift_merge.get(key)
+            if prev and time.time() - prev[0] <= 20.0:
+                stored = prev[1]
+                if ev.count > stored.count:
+                    stored.count = ev.count     # 连击数量合并到已经入队的那条
+                self._gift_merge[key] = (time.time(), stored)
+                return
+            self.q.push(ev)
+            self._gift_merge[key] = (time.time(), ev)
+            if len(self._gift_merge) > 500:
+                self._gift_merge.clear()
+            return
+        self.q.push(ev)
 
     @staticmethod
     def _nick(pm) -> str:

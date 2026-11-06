@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>AI电台 · 管理后台</title>
+<link rel="stylesheet" href="/app.css">
+</head>
+<body>
+<div class="headrow">
+  <h1 style="margin:0">🛠 管理后台</h1>
+  <div class="row" style="gap:6px">
+    <button class="ghost" id="btnConsole" style="min-height:34px;padding:0 10px;font-size:13px">去控制台</button>
+    <button class="ghost" id="btnLogout" style="min-height:34px;padding:0 10px;font-size:13px">退出</button>
+  </div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">账号审批</b>
+  <div class="hint">规则：注册后是「待审批」→ 你点「批准」才能用；「停用」的账号不能登录、也不能请求任何电台功能。</div>
+  <table id="users"><tr><th>账号</th><th>状态</th><th>操作</th></tr></table>
+  <div class="row" style="margin-top:10px">
+    <button id="btnRefresh" style="flex:1">刷新列表</button>
+  </div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">新建账号（你直接开一个给别人用）</b>
+  <div class="row" style="margin-top:6px">
+    <input id="nu" placeholder="用户名" style="flex:1">
+    <input id="np" placeholder="初始密码（≥6位）" style="flex:1">
+    <button id="btnCreateUser">创建并直接批准</button>
+  </div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">当前正在跑的电台（谁在播、播什么、花了多少生成）</b>
+  <div class="hint" style="margin-top:6px">空闲超过设定秒数没有请求的会自动停止（这里能看到当前还剩几个）。管理员也能直接停掉某个人的电台。</div>
+  <table id="online"><tr><th>用户</th><th>房间/稿</th><th>空闲</th><th>状态</th><th>TTS/复用</th><th>操作</th></tr></table>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">服务端日志</b>
+  <div class="log" id="srvlog" style="margin-top:6px"></div>
+</div>
+
+<div class="card">
+  <b style="font-size:14px">改管理员密码</b>
+  <div class="row" style="margin-top:6px">
+    <input id="pwOld" type="password" placeholder="当前密码" style="flex:1">
+    <input id="pwNew" type="password" placeholder="新密码（≥6位）" style="flex:1">
+    <button id="btnPw">保存</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script src="/app.js"></script>
+<script>
+const STATUS_LABEL = {active:'✅ 已批准', pending:'⏳ 待审批', disabled:'⛔ 已停用'};
+async function load() {
+  const d = await postJSON('/api/admin/users', {});
+  const rows = (d.users || []).map(u => {
+    const ops = [];
+    if (u.role === 'admin') return `<tr><td><b>${esc(u.username)}</b><div class="smeta">管理员</div></td><td>${STATUS_LABEL[u.status]||u.status}</td><td>—</td></tr>`;
+    if (u.status === 'pending') ops.push(`<button data-approve="${esc(u.username)}">批准</button>`);
+    if (u.status === 'active') ops.push(`<button class="danger" data-disable="${esc(u.username)}">停用</button>`);
+    if (u.status === 'disabled') ops.push(`<button class="ghost" data-enable="${esc(u.username)}">重新启用</button>`);
+    ops.push(`<button class="ghost" data-pw="${esc(u.username)}">重置密码</button>`);
+    ops.push(`<button class="ghost" data-del="${esc(u.username)}">删除</button>`);
+    return `<tr><td><b>${esc(u.username)}</b><div class="smeta">注册 ${new Date(u.created*1000).toLocaleString()}</div></td><td>${STATUS_LABEL[u.status]||u.status}</td><td>${ops.join(' ')}</td></tr>`;
+  }).join('');
+  $('users').innerHTML = '<tr><th>账号</th><th>状态</th><th>操作</th></tr>' + (rows || '<tr><td colspan=3>还没有用户</td></tr>');
+  for (const b of $('users').querySelectorAll('button')) {
+    const act2 = b.dataset.approve ? ['approve', b.dataset.approve]
+      : b.dataset.disable ? ['disable', b.dataset.disable]
+      : b.dataset.enable ? ['enable', b.dataset.enable]
+      : b.dataset.del ? ['delete', b.dataset.del]
+      : b.dataset.pw ? ['password', b.dataset.pw] : null;
+    if (!act2) continue;
+    b.onclick = () => act(null, '账号操作', async () => {
+      if (act2[0] === 'password') {
+        const pw = prompt('给 ' + act2[1] + ' 设置新密码（至少 6 位）：');
+        if (!pw) throw new Error('没填新密码');
+        const r = await postJSON('/api/admin/password', {username: act2[1], new: pw});
+        if (!r.ok) throw new Error('新密码至少 6 位');
+        return '已重置 ' + act2[1] + ' 的密码';
+      }
+      const r = await postJSON('/api/admin/' + act2[0], {username: act2[1]});
+      if (!r.ok) throw new Error('操作没生效（账号不存在或不能动管理员）');
+      await load();
+      return act2[1] + '：' + ({approve:'已批准，可以用了', disable:'已停用，不能再用', enable:'已重新启用', delete:'已删除'})[act2[0]];
+    });
+  }
+  const on = d.online || [];
+  $('online').innerHTML = '<tr><th>用户</th><th>房间/稿</th><th>空闲</th><th>状态</th><th>TTS/复用</th><th>操作</th></tr>' + (on.map(s =>
+    `<tr><td><b>${esc(s.username)}</b></td><td>${esc(s.room)}<div class="smeta">${esc(s.script_title||'—')}</div></td><td>${s.idle_s}s</td><td>${esc(s.status)}${s.paused?'（暂停）':''}</td><td>${s.tts_calls} / ${s.cache_hits}</td><td><button class="danger" data-stop="${esc(s.username)}">停掉</button></td></tr>`
+  ).join('') || '<tr><td colspan=6>现在没有在跑的电台</td></tr>');
+  for (const b of $('online').querySelectorAll('button')) b.onclick = () => act(null, '停止电台', async () => {
+    await postJSON('/api/admin/stop_user', {username: b.dataset.stop}); await load(); return b.dataset.stop + ' 的电台已停止';
+  });
+  $('srvlog').innerHTML = (d.log || []).map(esc).join('<br>');
+}
+$('btnRefresh').onclick = () => act('btnRefresh', '刷新', async () => { await load(); return '已刷新'; });
+$('btnCreateUser').onclick = () => act('btnCreateUser', '新建账号', async () => {
+  const u = $('nu').value.trim(), p = $('np').value;
+  await postJSON('/api/register', {username: u, password: p});
+  await postJSON('/api/admin/approve', {username: u});
+  await load(); $('nu').value = ''; $('np').value = '';
+  return '已创建并批准：' + u;
+});
+$('btnPw').onclick = () => act('btnPw', '改密码', async () => {
+  await postJSON('/api/password', {old: $('pwOld').value, new: $('pwNew').value});
+  $('pwOld').value = ''; $('pwNew').value = ''; return '管理员密码已更新';
+});
+$('btnConsole').onclick = () => { location.href = '/'; };
+$('btnLogout').onclick = () => act('btnLogout', '退出', async () => { await postJSON('/api/logout', {}); location.href = '/login'; return '已退出'; });
+load().catch(e => toast('读后台失败：' + e.message, true));
+setInterval(() => load().catch(() => {}), 15000);
+</script>
+</body>
+</html>

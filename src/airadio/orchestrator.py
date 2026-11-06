@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from .events import InteractionQueue
-from .live import LiveCollector
+from .live import LiveCollector, cookie_has_login
 from .player import ChunkWriter, FFplaySink
 from .mp3len import duration_ms
 from .silence import trim_edges
@@ -26,12 +26,16 @@ class Orchestrator:
                  out_dir: str = "out/chunks", sink: str = "file"):
         self.sink_name = sink
         self.queue = InteractionQueue()
-        self.collector = LiveCollector(web_rid, self.queue, on_status=self._on_status)
+        # 抖音登录 Cookie 必须在建采集器之前定好：没有它抖音不下发礼物消息（实测）
+        self.douyin_cookie = os.environ.get("DOUYIN_COOKIE", "").strip()
+        self.collector = LiveCollector(web_rid, self.queue, on_status=self._on_status,
+                                      login_cookie=self.douyin_cookie)
         self.script_text = script_text
         self.segments = parse_script(script_text)
         self.scheduler = Scheduler(schedule or ScheduleConfig(), self.queue)
         self.chunk_writer = ChunkWriter(out_dir)
-        self.out_dir = out_dir        # 生成过的音频落 out_dir/cache，重启进程后仍可复用
+        self.out_dir = out_dir        # 播放块/manifest 落这里（每个用户一份）
+        self.shared_cache_dir = ""      # 生成结果缓存：多用户时指向同一目录（同稿同音色不重复花钱）
         self.voice, self.model, self.speech_rate = voice, model, speech_rate
         self.api_key = api_key
         self.tts = None
@@ -50,7 +54,10 @@ class Orchestrator:
         self._log_total = 0      # 已产生过的日志条数（单调游标，供增量拉取）
         self._pause = threading.Event()
         self._stop = threading.Event()
+        self._wake = threading.Event()   # 叫醒 _sleep：跳句/从头重播不用等当前段播完
         self._restart = False
+        self._playback_epoch = 0         # 每次重定位 +1，前端据此清播放队列
+        self._play_start_chunk = 0       # 新播放起点对应的 manifest 下标
         self._seg_i = 0            # 稿内播放进度（暂停后从这里继续）
         self._pending_script: str | None = None
         self._lock = threading.Lock()
@@ -76,6 +83,7 @@ class Orchestrator:
         self.rotate_enabled = False
         self._rotate_idx = 0
         self.script_title = ""
+        # self.douyin_cookie 已在构造函数开头初始化（采集器要用）
         # 每套稿最多播这么多秒后，在下一段边界切下一套（0 = 必须整稿播完才切）
         self.rotate_after_s = 0.0
         # 按稿子行切换：这套稿播完 N 行就切下一套（0 = 不按行切）
@@ -92,23 +100,60 @@ class Orchestrator:
 
     def pause(self):
         self._pause.set()
+        self._wake.set()   # 立刻结束当前节拍，不用等这一段播完
 
     def resume(self):
         self._pause.clear()
+
+    # ---------- 播放代次：跳句/从头重播/换稿都要让当前节拍立刻结束 ----------
+    def _mark_playback_reset(self, why: str):
+        """播放器要重定位：递增代次（前端据此清掉已排好的音频队列），并记录新播放起点。
+
+        不这么做的话：正在 sleep 的这一段（一整组最长几十秒）会跑完才换，
+        浏览器也已经把当前这轮剩下的块排好了 —— 点「从头重播」看起来就"没反应、等半天"。
+        """
+        self._playback_epoch += 1
+        self._play_start_chunk = len(self.chunk_writer.manifest)
+        self._wake.set()
+
+    def _sleep(self, seconds: float) -> bool:
+        """可被 停止/跳句/从头重播/换稿 打断的节拍等待。返回 False = 被叫停，调用方应立刻返回。"""
+        end = time.time() + max(0.0, seconds)
+        epoch_at_entry = self._playback_epoch    # 进入这一段时的代次：变了就说明位置被改了
+        while True:
+            if self._stop.is_set():
+                return False
+            if self._pause.is_set():
+                return False        # 暂停要立刻停下，不是等这一段播完
+            if self._restart or self._playback_epoch != epoch_at_entry:
+                return False        # 换稿/播放位置被改了：别再等完这一段
+            remain = end - time.time()
+            if remain <= 0:
+                return True
+            self._wake.wait(min(0.2, remain))
+            self._wake.clear()
 
     def skip_sentence(self):
         """跳过当前正在处理/即将播放的一句。"""
         self._seg_i = min(self._seg_i + 1, len(self.segments))
         self._restart = False
+        self._mark_playback_reset("skip")   # 打断当前节拍 + 让前端清掉已排好的音频
         self.log_append("control: 跳过当前句")
 
     def rewind(self):
-        """整稿从头重播。"""
+        """整稿从头重播：立刻生效（不等当前段播完），并让浏览器清掉已排好的队列。"""
         self._seg_i = 0
+        self._mark_playback_reset("rewind")
         self.log_append("control: 从头重播")
 
     def stop(self):
+        """停这场电台：播放线程 + 抖音采集都立刻停（不留后台、不再请求百炼）。"""
         self._stop.set()
+        self._wake.set()
+        try:
+            self.collector.stop()      # 不等播放线程绕到 finally：采集连接马上断
+        except Exception:
+            pass
 
     @property
     def paused(self) -> bool:
@@ -126,6 +171,7 @@ class Orchestrator:
             self._pending_script = text
         if apply_now:
             self._restart = True
+            self._wake.set()          # 立即结束当前节拍，不用等这一段播完
         return sum(1 for s in segs if s.kind in ("speech", "mark"))
 
     def apply_pending_script(self) -> bool:
@@ -140,6 +186,7 @@ class Orchestrator:
         self._lines_played = 0
         self._last_line_no = None
         self._rotate_due = False
+        self._mark_playback_reset("script")
         self.log_append("script: 新稿已生效")
         return True
 
@@ -175,6 +222,7 @@ class Orchestrator:
         self._lines_played = 0
         self._last_line_no = None
         self._rotate_due = False
+        self._mark_playback_reset("rotate")
         self.log_append(f"rotate: 已切到下一套稿「{self.script_title}」")
         self._prefetch_ahead(0)
         return True
@@ -324,13 +372,32 @@ class Orchestrator:
             self.log_append("params: 百炼 Key 已设置，TTS 已启用")
         return True
 
+    def set_douyin_cookie(self, cookie: str) -> bool:
+        """设置/清除抖音登录 Cookie；下一次采集连接生效。"""
+        self.douyin_cookie = (cookie or "").strip()
+        self.collector.set_login_cookie(self.douyin_cookie)
+        if self.douyin_cookie and not cookie_has_login(self.douyin_cookie):
+            self.log_append("douyin: Cookie 里没有 sessionid_ss（登录态），礼物消息仍然不会有")
+            return False
+        self.log_append("douyin: 登录 Cookie 已更新（重连后生效）" if self.douyin_cookie
+                        else "douyin: 已清除登录 Cookie（只采弹幕/进场/关注/点赞/灯牌）")
+        # 采集正在跑就立刻重连（不然要等下一轮重试才生效）；没在跑就等开播时用
+        try:
+            running = bool(self.collector._thread and self.collector._thread.is_alive())
+        except Exception:
+            running = False
+        if running:
+            self.set_room(self.collector.web_rid)
+        return True
+
     def set_room(self, web_rid: str) -> None:
         """切换直播间（线程安全重启采集器）。"""
         self.collector.stop()
         time.sleep(0.2)
         self.queue = InteractionQueue()
         self.scheduler.q = self.queue
-        self.collector = LiveCollector(web_rid, self.queue, on_status=self._on_status)
+        self.collector = LiveCollector(web_rid, self.queue, on_status=self._on_status,
+                                      login_cookie=self.douyin_cookie)
         self.collector.start()
         self.log_append(f"room: 切换到 {web_rid}")
 
@@ -363,11 +430,19 @@ class Orchestrator:
                 "live": bool(room and room.status == 2),
             },
             "paused": self.paused,
+            # 播放代次：跳句/从头重播/换稿都会 +1；前端据此清掉已排好的音频队列，
+            # play_start_chunk = 新播放起点对应的块下标（浏览器从这里开始播，不重播旧的）
+            "playback_epoch": self._playback_epoch,
+            "play_start_chunk": self._play_start_chunk,
             "stats": dict(self.queue.stats),
             "inserts": self.scheduler.inserted_count,
             "segments": sum(1 for s in self.segments if s.kind in ("speech", "mark")),
             "chunks": len(self.chunk_writer.manifest),
             "audio": self.chunk_writer.reuse_stats(),
+            # 礼物数据取决于是否带了抖音登录 Cookie（服务端只给登录连接下发礼物消息）
+            "douyin_login": {"cookie_set": bool(self.douyin_cookie),
+                             "has_login": cookie_has_login(self.douyin_cookie),
+                             "gift_available": self.collector.gift_available},
             "events": self.queue.recent(events_n),
             # 日志：给了 log_after 就只回增量（前端轮询不必每次重拉整段历史）
             "log": (self.log[max(0, log_after - (self._log_total - len(self.log))):]
@@ -452,7 +527,10 @@ class Orchestrator:
                     if max_loops and loop > max_loops * 4:
                         break
                     continue
+                epoch_before_pass = self._playback_epoch
                 self._play_pass()
+                if self._playback_epoch != epoch_before_pass:
+                    continue   # 用户跳句/从头重播/换稿：别等 loop_pause，马上重排
                 if self._restart:
                     self._restart = False
                     self.apply_pending_script()
@@ -529,11 +607,16 @@ class Orchestrator:
         return audio
 
     def _audio_cache_path(self, cache_key: str) -> Path | None:
-        """生成过的音频按 (模型+音色+语速+文本) 落一份，重启进程后仍可复用。"""
+        """生成过的音频按 (模型+音色+语速+文本) 落一份，重启进程后仍可复用。
+
+        多用户时生成缓存是**共享目录**（shared_cache_dir）：同一套稿同一个音色，
+        第一个人生成过，后面的人直接命中，不再花第二次钱。播放块/manifest 仍各自一份。
+        """
         if self.sink_name == "dry":
             return None
-        h = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()
-        return Path(self.out_dir) / "cache" / f"{h}.mp3"
+        digest = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()
+        base = getattr(self, "shared_cache_dir", "") or (Path(self.out_dir) / "cache")
+        return Path(base) / f"{digest}.mp3"
 
     # ---------- 预生成（提前把后面几句合成好，播放时不被 TTS 拖节拍） ----------
 
@@ -695,7 +778,8 @@ class Orchestrator:
             dur_ms = duration_ms(audio) if audio else 0.0
             dur_s = dur_ms / 1000.0 if dur_ms > 0 else self._estimate_elapsed_s(texts)
             self._prefetch_ahead(i)  # 当前组播出的这段时间，后台先合成后面几组
-            time.sleep(max(0.0, dur_s) + gap_ms / 1000.0)
+            if not self._sleep(max(0.0, dur_s) + gap_ms / 1000.0):
+                return   # 被跳句/从头重播/换稿叫停：新位置已经设好，回 run() 重排
             # 句边界：能不能插播？（看下一个边界是否受保护）
             nxt_protected = self._next_boundary_protected(i)
             insert_text = self.scheduler.on_boundary(time.time(), nxt_protected)

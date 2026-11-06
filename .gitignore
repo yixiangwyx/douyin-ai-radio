@@ -8,9 +8,12 @@ wheels/
 
 # Virtual environments
 .venv
-
-out/
 .venv/
-.env
+
+# 本地运行产物与私密数据（不进 Git）
 out/
+.env
 data/library.json
+# 账号（只存密码哈希）+ 每个用户的稿子/话术/抖音登录 Cookie
+data/users.json
+data/users/
