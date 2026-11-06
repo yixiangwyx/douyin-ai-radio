@@ -311,18 +311,27 @@ async function postJSON(path, body) {
   return d;
 }
 let logBuf = [], logCursor = 0;   // 日志增量缓冲：轮询只要新增条目，不重拉整段历史
+let polling = false;              // 同一次轮询没回来就不发下一次（隧道慢时轮询会重叠，重叠会拿到同一批日志）
 async function getState() {
+  if (polling) return;
+  polling = true;
   try {
     const r = await api('/api/state?lite=1&log_after=' + logCursor); if (!r.ok) return;
     const s = await r.json();
     if (s.log && s.log.length) {
-      logBuf = logBuf.concat(s.log);
-      if (logBuf.length > 300) logBuf = logBuf.slice(-300);
+      // 去重后再追加：即使两次轮询重叠拿到同一批，页面上也不会重复显示
+      const have = new Set(logBuf.slice(-120));
+      const fresh = s.log.filter(x => !have.has(x));
+      if (fresh.length) {
+        logBuf = logBuf.concat(fresh);
+        if (logBuf.length > 300) logBuf = logBuf.slice(-300);
+      }
     }
     if (typeof s.log_total === 'number') logCursor = s.log_total;
     s.log = logBuf;          // 渲染统一用本地缓冲
     render(s);
   } catch(e) { $('status').textContent = '服务连接中断，重试中…'; }
+  finally { polling = false; }
 }
 function render(s) {
   const st = $('status');
