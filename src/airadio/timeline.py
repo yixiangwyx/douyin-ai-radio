@@ -52,6 +52,9 @@ _DEFAULT_TEMPLATES = {
 NICK_MAX = 12  # 昵称播报长度上限
 
 
+MAX_LINE_CHARS = 400   # 单行超过这个长度才按句号细分（一次合成太长不利于插播与超时控制）
+
+
 @dataclass
 class Segment:
     kind: str  # speech | pause | mark
@@ -59,36 +62,61 @@ class Segment:
     duration_ms: int = 0
     protected: bool = False
     can_interrupt_after: bool = False
+    line_no: int = -1    # 来自稿子的第几行（按行播放/按行轮换用）
 
 
-def parse_script(text: str) -> list[Segment]:
+def parse_script(text: str, line_units: bool = True) -> list[Segment]:
+    """把稿子解析成可播的段。
+
+    line_units=True（默认）：**一行 = 一个播放/合成单元**，行内不再按句号拆碎。
+      上传的实录稿一行就是一段话，按句拆会产生几百个碎块（每块自带边界与停顿）。
+      行内含控制标记（[[pause:…]] / [[no interrupt]] / [[待插:…]]）时仍按标记切分。
+      单行超过 MAX_LINE_CHARS 才退回按句号细分。
+    line_units=False：旧行为，按句号逐句切。
+    """
     segs: list[Segment] = []
     protected = False
-    for raw in text.splitlines():
+    for lineno, raw in enumerate(text.splitlines()):
         line = raw.strip()
         if not line or line.startswith("<!--"):
             continue
+
+        def add(kind: str, body: str, duration_ms: int = 0, prot: bool = False) -> None:
+            if not body and kind != "pause":
+                return
+            segs.append(Segment(kind, body, duration_ms, prot, not prot, lineno))
+
         m_title = re.match(r"^#+\s*(.+)$", line)
         if m_title:
-            segs.append(Segment("speech", f"接下来，{m_title.group(1).strip()}。",
-                                protected=protected, can_interrupt_after=not protected))
+            add("speech", f"接下来，{m_title.group(1).strip()}。", prot=protected)
             continue
+
+        def emit_plain(frag: str) -> None:
+            frag = frag.strip()
+            if not frag:
+                return
+            if line_units and len(frag) <= MAX_LINE_CHARS:
+                add("speech", frag, prot=protected)
+            else:
+                for s in _split_sentences(frag, protected):
+                    s.line_no = lineno
+                    segs.append(s)
+
         pos = 0
         for m in CTRL_TOKEN_RE.finditer(line):
             if m.start() > pos:
-                segs.extend(_split_sentences(line[pos:m.start()], protected))
+                emit_plain(line[pos:m.start()])
             if m.group(1) is not None:
-                segs.append(Segment("pause", "", int(m.group(1))))
+                add("pause", "", int(m.group(1)))
             elif m.group(2) is not None:
                 protected = True
             elif m.group(3) is not None:
                 protected = False
             elif m.group(4) is not None:
-                segs.append(Segment("mark", m.group(4).strip() or "感谢各位的支持",
-                                   protected=True, can_interrupt_after=True))
+                add("mark", m.group(4).strip() or "感谢各位的支持", prot=True)
             pos = m.end()
         if pos < len(line):
-            segs.extend(_split_sentences(line[pos:], protected))
+            emit_plain(line[pos:])
     return segs
 
 

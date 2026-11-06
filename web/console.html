@@ -120,6 +120,20 @@
   <div class="hint" id="genHint">生成只写文字，不直接播放；生成后自动填进上面的稿子框，你确认后再点「保存并立即从头播」。</div>
 
   <b style="font-size:15px;display:block;margin-top:12px">稿子库</b>
+  <label style="margin-top:4px">上传稿子（选 .txt 文件，一行一句）</label>
+  <div class="row" style="margin-top:4px">
+    <input type="file" id="scriptFile" accept=".txt,text/plain" style="flex:1;min-height:40px;border:1px solid #2b3641;border-radius:8px;padding:8px;font-size:13px">
+    <div style="flex:1"><label>稿子名称（留空用文件名）</label><input id="uploadTitle" placeholder="例：留人话术 第2版"></div>
+    <button id="btnUploadScript" style="flex-shrink:0">上传</button>
+  </div>
+  <label style="margin-top:8px">多稿轮换：一套播完自动切下一套（不足 2 套不切）</label>
+  <div class="row" style="margin-top:4px">
+    <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="rotateChk" style="width:auto;min-height:auto">开启多稿自动轮换</label>
+    <div style="flex:1"><label>每套最多播 N 行（按稿子行数切，0=不按行）</label><input id="rotateLines" type="number" min="0" max="200" step="1"></div>
+    <div style="flex:1"><label>或每套最多播 N 分钟（0=不限）</label><input id="rotateMin" type="number" min="0" max="60" step="1"></div>
+    <button class="ghost" id="btnNextScript">下一稿</button>
+  </div>
+  <div class="hint" id="rotateHint">两个条件哪个先到就切：行数按稿子的行计（你的稿 118 行，填 20 就是每 20 行切一次）。切换只发生在句子边界。当前稿与已播行数显示在顶部。</div>
   <div id="scriptList" class="scriptlist"></div>
 </div>
 
@@ -262,6 +276,8 @@ function render(s) {
   // 播放进度 + 音频就绪（预生成覆盖率）
   const pos = (s.seg_index != null && s.seg_count) ? Math.min(s.seg_index, s.seg_count) : 0;
   $('playPos').textContent = '播放进度 第 ' + pos + ' / ' + (s.seg_count || 0) + ' 段'
+    + (s.script_title ? ' · 当前稿：' + s.script_title : '')
+    + (s.rotate_enabled ? ' · 多稿轮换开（第 ' + ((s.rotate_index||0)+1) + ' 套，已播 ' + Math.round((s.script_elapsed_s||0)/60) + ' 分钟' + (s.rotate_after_s ? '/限 ' + Math.round(s.rotate_after_s/60) + ' 分钟' : '·整稿播完才切') + '）' : '')
     + (s.prefetch_running ? ' · 预生成中 ' + (s.prefetch_done||0) + '/' + ((s.prefetch_done||0)+(s.prefetch_pending||0)) : '');
   const ready = s.cache_ready || 0, total = s.cache_total || 0;
   const pct = total ? Math.round(ready * 100 / total) : 0;
@@ -421,6 +437,29 @@ function renderScripts() {
   }
 }
 $('btnRefreshLib').onclick = () => act('btnRefreshLib', '刷新库', async () => { await loadLibrary(); return '话题 ' + (libCache.topics||[]).length + ' 条 · 稿子 ' + (libCache.scripts||[]).length + ' 套'; });
+$('btnUploadScript').onclick = () => act('btnUploadScript', '上传稿子', async () => {
+  const f = $('scriptFile').files[0];
+  if (!f) throw new Error('先选择一个 .txt 稿子文件');
+  const text = await f.text();
+  if (!text.trim()) throw new Error('文件是空的');
+  const title = $('uploadTitle').value.trim() || f.name.replace(/\.txt$/i, '');
+  const d = await postJSON('/api/library/save', {title, text, source: '上传文件'});
+  await loadLibrary();
+  $('uploadTitle').value = ''; $('scriptFile').value = '';
+  return '已上传「' + title + '」' + d.sentences + ' 句，进稿子库（可点播放这稿或开轮换）';
+});
+$('rotateChk').onchange = () => act(null, '多稿轮换', async () => {
+  const mins = parseInt($('rotateMin').value);
+  const lines = parseInt($('rotateLines').value);
+  const d = await postJSON('/api/rotate', {enabled: $('rotateChk').checked,
+    after_s: isFinite(mins) ? Math.max(0, Math.min(60, mins)) * 60 : undefined,
+    after_lines: isFinite(lines) ? Math.max(0, Math.min(200, lines)) : undefined});
+  getState(); return d.enabled ? ('多稿轮换已开启：' + (d.after_lines ? ('每 ' + d.after_lines + ' 行切一次') : (d.after_s ? ('每套最多 ' + Math.round(d.after_s/60) + ' 分钟就切下一套') : '整稿播完才切'))) : '多稿轮换已关闭：当前稿循环播放';
+});
+$('btnNextScript').onclick = () => act('btnNextScript', '下一稿', async () => {
+  await postJSON('/api/control', {action: 'next_script'});
+  await loadLibrary(); getState(); return '已切到稿子库的下一套稿';
+});
 $('btnAddTopic').onclick = () => act('btnAddTopic', '加话题', async () => {
   const t = $('topicInput').value.trim(); if (!t) throw new Error('先写话题');
   await postJSON('/api/library/topic', {title: t, note: window._genNote || ''});
@@ -585,6 +624,9 @@ $('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
   $('mergeInput').value = (s.merge_sentences != null ? s.merge_sentences : 2);
   $('gapInput').value = (s.sentence_gap_ms != null ? s.sentence_gap_ms : 150);
   $('trimChk').checked = s.trim_silence !== false;
+  $('rotateChk').checked = !!s.rotate_enabled;
+  $('rotateLines').value = (s.rotate_after_lines != null ? s.rotate_after_lines : 0);
+  $('rotateMin').value = (s.rotate_after_s != null ? Math.round(s.rotate_after_s / 60) : 0);
   if (s.params.voice) $('voiceSel').value = s.params.voice;
   for (const k of ['gift','chat','follow','member','like']) {
     const v = (s.params.per_kind_windows || {})[k];

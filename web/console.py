@@ -134,9 +134,20 @@ class Handler(BaseHTTPRequestHandler):
                 if not item:
                     return self._send(404, json.dumps({"error": "稿子不存在"}))
                 n = self.orch.update_script(item["text"], apply_now=bool(body.get("apply_now", True)))
+                idx = next((i for i, s in enumerate(LIB.data["scripts"]) if s["id"] == item["id"]), None)
+                if idx is not None:
+                    self.orch.set_rotate(self.orch.rotate_enabled, LIB.rotate_source, idx=idx)
+                self.orch.script_title = item["title"]
                 return self._send(200, json.dumps({"ok": True, "title": item["title"],
                                                    "sentences": n, "applied": bool(body.get("apply_now", True))},
                                                   ensure_ascii=False))
+            if p == "/api/rotate":
+                self.orch.set_rotate(bool(body.get("enabled")), LIB.rotate_source,
+                                     after_s=body.get("after_s"),
+                                     after_lines=body.get("after_lines"))
+                return self._send(200, json.dumps({"ok": True, "enabled": self.orch.rotate_enabled,
+                                                   "after_s": self.orch.rotate_after_s,
+                                                   "after_lines": self.orch.rotate_after_lines}))
             if p == "/api/generate":
                 topic = (body.get("topic") or "").strip()
                 if not topic:
@@ -206,6 +217,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.orch.skip_sentence()
                 elif action == "rewind":
                     self.orch.rewind()
+                elif action == "next_script":
+                    if not self.orch._maybe_rotate():
+                        return self._send(422, json.dumps(
+                            {"error": "轮换没开或稿子库里不足 2 套稿"}, ensure_ascii=False))
                 else:
                     return self._send(400, b'{"error":"unknown action"}')
                 return self._send(200, json.dumps({"ok": True}))
@@ -330,8 +345,9 @@ def main():
     w0, w1 = (float(x) for x in args.window.split(","))
     global LIB
     LIB = LIB or Library(ROOT / "data" / "library.json")
-    if not LIB.data["topics"]:
-        for t, n in gen.STARTER_TOPICS:
+    have = {t["title"] for t in LIB.data["topics"]}     # 只补新增的起点话题，不重复
+    for t, n in gen.STARTER_TOPICS:
+        if t not in have:
             LIB.add_topic(t, n)
     orch = Orchestrator(
         args.room, load_dotenv_script(ROOT / args.script),

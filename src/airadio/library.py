@@ -76,6 +76,11 @@ class Library:
                 return s
         return None
 
+    def rotate_source(self) -> list[dict]:
+        """给 orchestrator 轮换用：只返回内容非空的稿（顺序与稿子库一致）。"""
+        return [{"title": s.get("title", ""), "text": s.get("text", "")}
+                for s in self.data["scripts"] if (s.get("text") or "").strip()]
+
     def snapshot(self) -> dict:
         return {
             "topics": [{k: t.get(k) for k in ("id", "title", "note", "used")} | {"created": t.get("created", 0)}

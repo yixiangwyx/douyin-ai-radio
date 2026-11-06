@@ -66,6 +66,19 @@ class Orchestrator:
         self._prefetch_thread: threading.Thread | None = None
         self.prefetch_pending = 0
         self.prefetch_done = 0
+        # 多稿轮换：一轮播完自动切到稿子库的下一套稿（script_source 由控制台注入）
+        self.script_source = None            # callable -> [{"title","text"}, ...]
+        self.rotate_enabled = False
+        self._rotate_idx = 0
+        self.script_title = ""
+        # 每套稿最多播这么多秒后，在下一段边界切下一套（0 = 必须整稿播完才切）
+        self.rotate_after_s = 0.0
+        # 按稿子行切换：这套稿播完 N 行就切下一套（0 = 不按行切）
+        self.rotate_after_lines = 0
+        self._script_started_at = 0.0
+        self._lines_played = 0
+        self._last_line_no = None
+        self._rotate_due = False
         self.cache_size_peak = 0
 
     # ---------- 控制 API（供 web 控制台 / CLI 调用） ----------
@@ -116,8 +129,69 @@ class Orchestrator:
             self.segments = parse_script(self.script_text)
             self._pending_script = None
         self._seg_i = 0
+        self._script_started_at = time.time()
+        self._lines_played = 0
+        self._last_line_no = None
+        self._rotate_due = False
         self.log_append("script: 新稿已生效")
         return True
+
+    def _maybe_rotate(self) -> bool:
+        """轮换开着头就切到稿子库的下一套稿；返回是否切了。"""
+        if not self.rotate_enabled or not self.script_source:
+            return False
+        try:
+            items = [s for s in (self.script_source() or []) if (s.get("text") or "").strip()]
+        except Exception:
+            return False
+        if len(items) < 2:
+            return False
+        # 从"当前正在播的那一套"往后切，避免切回同一套（手动切稿后索引可能不同步）
+        cur = next((i for i, s in enumerate(items) if s.get("title") == self.script_title), None)
+        base = cur if cur is not None else self._rotate_idx
+        self._rotate_idx = (base + 1) % len(items)
+        item = items[self._rotate_idx]
+        if item.get("title") == self.script_title:
+            return False
+        try:
+            segs = parse_script(item["text"])
+        except Exception:
+            return False
+        if not any(s.kind == "speech" for s in segs):
+            return False
+        with self._lock:
+            self.script_text = item["text"]
+            self.segments = segs
+            self.script_title = item.get("title", "")
+        self._seg_i = 0
+        self._script_started_at = time.time()
+        self._lines_played = 0
+        self._last_line_no = None
+        self._rotate_due = False
+        self.log_append(f"rotate: 已切到下一套稿「{self.script_title}」")
+        self._prefetch_ahead(0)
+        return True
+
+    def set_rotate(self, enabled: bool, source=None, idx: int | None = None,
+                   after_s: float | None = None, after_lines: int | None = None) -> None:
+        changed = self.rotate_enabled != bool(enabled)
+        self.rotate_enabled = bool(enabled)
+        if source is not None:
+            self.script_source = source
+        if idx is not None:
+            self._rotate_idx = int(idx)
+        if after_s is not None:
+            self.rotate_after_s = max(0.0, min(3600.0, float(after_s)))
+        if after_lines is not None:
+            self.rotate_after_lines = max(0, min(500, int(after_lines)))
+        if changed:
+            if self.rotate_after_lines:
+                how = f"（每 {self.rotate_after_lines} 行切一次）"
+            elif self.rotate_after_s:
+                how = f"（每套最多 {self.rotate_after_s/60:.0f} 分钟）"
+            else:
+                how = "（整稿播完才切）"
+            self.log_append(f"rotate: 多稿轮换{'开' if self.rotate_enabled else '关'}{how}")
 
     def update_params(self, *, voice: str | None = None, model: str | None = None,
                       rate: float | None = None, min_gap: float | None = None,
@@ -256,6 +330,13 @@ class Orchestrator:
             "trim_removed_ms": self.trim_removed_ms,
             "seg_index": self._seg_i,
             "seg_count": len(self.segments),
+            "script_title": self.script_title,
+            "rotate_enabled": self.rotate_enabled,
+            "rotate_index": self._rotate_idx,
+            "rotate_after_s": self.rotate_after_s,
+            "rotate_after_lines": self.rotate_after_lines,
+            "lines_played": self._lines_played,
+            "script_elapsed_s": (time.time() - self._script_started_at) if self._script_started_at else 0,
             "tts_error": (self.tts.last_error if self.tts else
                           (self.tts_init_error or ("(dry 模式，未合成)" if self.sink_name == "dry" else ""))),
             "api_key_set": self.has_api_key(),
@@ -300,7 +381,9 @@ class Orchestrator:
                 if self._pending_script is not None:  # 下一轮开头生效
                     self.apply_pending_script()
                 elif self._seg_i >= len(self.segments):
-                    self._seg_i = 0  # 整轮自然播完 → 从头循环（音频走缓存，不再请求TTS）
+                    # 整轮自然播完：轮换开着头就切下一套稿，否则从头循环（音频走缓存）
+                    if not self._maybe_rotate():
+                        self._seg_i = 0  # 整轮自然播完 → 从头循环（音频走缓存，不再请求TTS）
                 if max_loops:
                     loop += 1
                     if loop >= max_loops:
@@ -474,6 +557,12 @@ class Orchestrator:
                 kind = seg.kind
             i = idxs[-1] + 1
             self._seg_i = i
+            # 统计这套稿已经播过多少行（同一行只算一次）
+            for k in idxs:
+                ln = self.segments[k].line_no
+                if ln is not None and ln >= 0 and ln != self._last_line_no:
+                    self._last_line_no = ln
+                    self._lines_played += 1
             audio = self._synth_cached(cache_key, texts)
             # 第一块不留空；后续每块前留句间停顿（与本地 sleep 一致，浏览器据此接播）
             gap_ms = max(0, int(self.sentence_gap_ms)) if self.chunk_writer.manifest else 0
@@ -493,6 +582,14 @@ class Orchestrator:
                 ins_audio = self._synth([insert_text])
                 self.chunk_writer.write("interrupt", insert_text, ins_audio or b"")
                 self.log_append(f"INSERT: {insert_text}")
+            # 轮换触发：按行（播够 N 行）或按时间（播够 N 秒），都在段边界切下一套
+            due_lines = (self.rotate_after_lines > 0
+                         and self._lines_played >= self.rotate_after_lines)
+            due_time = (self.rotate_after_s > 0 and self._script_started_at > 0
+                        and time.time() - self._script_started_at >= self.rotate_after_s)
+            if self.rotate_enabled and self.script_source and (due_lines or due_time):
+                if self._maybe_rotate():
+                    return
 
     def _next_boundary_protected(self, i: int) -> bool:
         for j in range(i, len(self.segments)):

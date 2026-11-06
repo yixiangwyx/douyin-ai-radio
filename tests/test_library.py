@@ -46,6 +46,17 @@ def test_local_draft_follows_topic_type():
     assert "千次观看成交额" in text2 or "曝光进入率" in text2
 
 
+def test_every_starter_topic_hits_a_specific_pack():
+    """每个内置话题都要生成出有针对性的内容，不能都落到通用兜底包。"""
+    generic = "最有效的方法是连续三场只改一个动作"
+    bad = []
+    for title, note in STARTER_TOPICS:
+        text = draft_from_topic(title, note, sentences=12)
+        if generic in text:
+            bad.append(title)
+    assert not bad, f"这些话题只拿到兜底内容: {bad}"
+
+
 def test_clean_draft_strips_numbering_and_markdown():
     raw = "1. 第一句内容\n- 第二句内容\n**第三句内容**\n说明：以上是稿子"
     out = _clean_draft(raw, 10)
