@@ -26,6 +26,10 @@ def main():
     ap.add_argument("--window", default="60,150", help="全局默认随机插播窗口秒，如 60,150")
     ap.add_argument("--kind-window", default="", help="每类互动独立区间，如 gift=15,40;chat=20,50;like=90,180")
     ap.add_argument("--loops", type=int, default=0, help="稿子循环次数，0=无限(默认无限循环)")
+    ap.add_argument("--prefetch", type=int, default=3,
+                    help="自动预生成后面 N 句（0=关闭，边播边合成）")
+    ap.add_argument("--prefetch-all", action="store_true",
+                    help="启动时先把整稿全部预生成")
     ap.add_argument("--out", default="out/chunks")
     args = ap.parse_args()
 
@@ -45,7 +49,13 @@ def main():
     orch = Orchestrator(args.room, script_text, schedule=cfg, voice=args.voice,
                         model=args.model, speech_rate=args.rate,
                         out_dir=args.out, sink=args.sink)
-    print(f"room={args.room} voice={args.voice} sink={args.sink}")
+    orch.prefetch_ahead = max(0, min(20, args.prefetch))
+    print(f"room={args.room} voice={args.voice} sink={args.sink} prefetch_ahead={orch.prefetch_ahead}")
+    if args.prefetch_all:
+        try:
+            print(f"预生成整稿: {orch.prefetch_script(None)} 句")
+        except ValueError as e:
+            print("预生成跳过:", e)
     try:
         orch.run(max_loops=args.loops)
     except KeyboardInterrupt:

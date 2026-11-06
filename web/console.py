@@ -122,8 +122,14 @@ class Handler(BaseHTTPRequestHandler):
                     voice=body.get("voice"), model=body.get("model"),
                     rate=body.get("rate"), min_gap=body.get("min_gap"),
                     window=(window[0], window[1]) if isinstance(window, list) and len(window) == 2 else None,
-                    per_kind_windows=clean or None)
+                    per_kind_windows=clean or None,
+                    prefetch_ahead=body.get("prefetch_ahead"))
                 return self._send(200, json.dumps({"ok": True}))
+            if p == "/api/prefetch":
+                n = body.get("limit")
+                limit = None if (n is None or n == "" or n == "all") else max(1, int(n))
+                queued = self.orch.prefetch_script(limit)
+                return self._send(200, json.dumps({"ok": True, "queued": queued}))
             if p == "/api/room":
                 self.orch.set_room(str(body.get("room", "")).strip())
                 return self._send(200, json.dumps({"ok": True}))

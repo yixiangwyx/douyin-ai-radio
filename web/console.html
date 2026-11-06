@@ -38,6 +38,14 @@
   .log div { font-size:12px; color:var(--dim); padding:2px 0; font-family:ui-monospace,monospace; }
   details summary { cursor:pointer; color:var(--dim); font-size:14px; }
   .hint { font-size:12px; color:var(--dim); margin-top:6px; line-height:1.5; }
+  .toast { position:fixed; left:12px; right:12px; bottom:78px; background:#1f6b45; color:#fff;
+           padding:11px 13px; border-radius:10px; font-size:14px; z-index:50;
+           box-shadow:0 4px 14px #000a; opacity:0; transform:translateY(8px); transition:.18s; }
+  .toast.show { opacity:1; transform:none; }
+  .toast.err { background:#8e2b20; }
+  button.busy { opacity:.55; }
+  .bar { height:7px; background:#0c1116; border-radius:5px; overflow:hidden; margin-top:6px; }
+  .bar i { display:block; height:100%; background:var(--int); width:0%; transition:width .4s; }
   #playBtn { position:fixed; left:12px; right:12px; bottom:10px; background:var(--int);
              font-size:16px; box-shadow:0 4px 14px #0009; }
 </style>
@@ -48,7 +56,7 @@
 <div class="card">
   <div class="status" id="status">连接中…</div>
   <div class="stats" id="stats"></div>
-  <div class="row" style="margin-top:10px">
+  <div class="row" style="margin-top:8px">
     <button id="btnPause">暂停</button>
     <button class="ghost" id="btnSkip">跳下一句</button>
     <button class="ghost" id="btnRewind">从头重播</button>
@@ -57,6 +65,11 @@
     <input id="roomInput" placeholder="切换直播间号" style="flex:1">
     <button class="ghost" id="btnRoom">切房</button>
   </div>
+  <div class="row" style="margin-top:8px;justify-content:space-between">
+    <span class="status" id="playPos">播放进度 –</span>
+    <span class="status" id="readyPct">音频就绪 –</span>
+  </div>
+  <div class="bar"><i id="readyBar"></i></div>
 </div>
 
 <div class="card">
@@ -113,6 +126,15 @@
     <div class="hint">录 10–20 秒连贯朗读（至少连续说 5 秒、别带背景音乐）→ 生成后自动选中并试听。已生成的复刻音色在列表最上方。</div>
     <div class="hint" id="cloneHint"></div>
   </div>
+  <div style="border-top:1px solid #2b3641;margin-top:10px;padding-top:10px">
+    <b style="font-size:14px">预生成（提前合成，避免边播边等）</b>
+    <div class="row" style="margin-top:6px">
+      <div style="flex:1"><label>自动预生成后面 N 句（0=关闭）</label><input id="prefetchInput" type="number" min="0" max="20"></div>
+      <button class="ghost" id="btnPrefetchN">预生成 N 句</button>
+      <button class="ghost" id="btnPrefetchAll">预生成整稿</button>
+    </div>
+    <div class="hint" id="prefetchHint">提交新稿不会一次全部提交给百炼：默认边播边合成，并自动提前预生成 3 句；点「预生成整稿」才一次把整稿合成完（之后循环全程零请求）。</div>
+  </div>
   <label style="margin-top:12px">每类互动的随机插播区间（秒，低,高）— 留空=跟随全局默认</label>
   <div class="grid">
     <div><label>礼物 gift</label><input id="kw_gift" placeholder="15,40"></div>
@@ -144,6 +166,37 @@ async function api(path, body) {
   const r = await fetch(path, body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : undefined);
   return r;
 }
+let toastTimer = null, inflight = new Set();
+function toast(msg, isErr) {
+  let t = $('toast');
+  if (!t) { t = document.createElement('div'); t.id = 'toast'; t.className = 'toast'; document.body.appendChild(t); }
+  t.textContent = msg;
+  t.className = 'toast show' + (isErr ? ' err' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = 'toast' + (isErr ? ' err' : ''); }, 2600);
+}
+// 统一的按钮动作：防止重复点击 + 明确反馈（成功/失败都提示）
+async function act(btnId, label, fn) {
+  const b = $(btnId);
+  if (!b || inflight.has(btnId)) { toast(label + '：正在处理中，请稍候', true); return; }
+  inflight.add(btnId); const old = b.textContent;
+  b.classList.add('busy'); b.textContent = '处理中…';
+  try {
+    const msg = await fn();
+    if (msg) toast(msg);
+  } catch (e) {
+    toast(label + '失败：' + (e && e.message ? e.message : e), true);
+  } finally {
+    inflight.delete(btnId); b.classList.remove('busy'); b.textContent = old;
+  }
+}
+async function postJSON(path, body) {
+  const r = await api(path, body);
+  let d = {};
+  try { d = await r.json(); } catch (e) {}
+  if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
+  return d;
+}
 async function getState() {
   try {
     const r = await api('/api/state'); if (!r.ok) return;
@@ -163,6 +216,15 @@ function render(s) {
     (s.tts_error ? ' · <b class=err>TTS: '+s.tts_error+'</b>' : '');
   const c = s.stats.chat||0, g = s.stats.gift||0, f = s.stats.follow||0, m = s.stats.member||0, l = s.stats.like||0;
   $('stats').innerHTML = `<span>弹幕 <b>${c}</b></span><span>礼物 <b>${g}</b></span><span>关注 <b>${f}</b></span><span>进场 <b>${m}</b></span><span>点赞 <b>${l}</b></span><span>已插播 <b>${s.inserts}</b></span><span>稿件句数 <b>${s.segments}</b></span><span>TTS调用 <b>${s.tts_calls}</b> / 缓存复用 <b>${s.cache_hits}</b></span>`;
+  // 播放进度 + 音频就绪（预生成覆盖率）
+  const pos = (s.seg_index != null && s.seg_count) ? Math.min(s.seg_index, s.seg_count) : 0;
+  $('playPos').textContent = '播放进度 第 ' + pos + ' / ' + (s.seg_count || 0) + ' 段'
+    + (s.prefetch_running ? ' · 预生成中 ' + (s.prefetch_done||0) + '/' + ((s.prefetch_done||0)+(s.prefetch_pending||0)) : '');
+  const ready = s.cache_ready || 0, total = s.cache_total || 0;
+  const pct = total ? Math.round(ready * 100 / total) : 0;
+  $('readyPct').innerHTML = '音频就绪 <b>' + ready + '/' + total + '</b>（' + pct + '%）'
+    + ' · 自动预生成 ' + (s.prefetch_ahead || 0) + ' 句';
+  $('readyBar').style.width = pct + '%';
   const feed = $('feed');
   const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', interrupt:'插播'};
   let html = '';
@@ -208,42 +270,74 @@ $('playBtn').onclick = async () => {
   $('playBtn').textContent = autoPlay ? '⏸ 停止自动播放' : '▶ 开始连续播放（外放）';
   if (autoPlay) { const s = await (await api('/api/state')).json(); playedThrough = s.chunks; render(s); }
 };
-$('btnPause').onclick = async () => { const s=await(await api('/api/state')).json(); await api('/api/control',{action: s.paused?'resume':'pause'}); getState(); };
-$('btnSkip').onclick = async () => { await api('/api/control',{action:'skip'}); getState(); };
-$('btnRewind').onclick = async () => { await api('/api/control',{action:'rewind'}); getState(); };
-$('btnRoom').onclick = async () => { const v=$('roomInput').value.trim(); if(v){ await api('/api/room',{room:v}); $('roomInput').value=''; getState(); } };
-$('btnLoadScript').onclick = async () => { const r=await api('/api/script'); const d=await r.json(); $('scriptBox').value=d.text; };
-$('btnSaveScript').onclick = async () => { const r=await api('/api/script',{text:$('scriptBox').value,apply_now:false}); const d=await r.json(); alert(d.ok?('已保存，共 '+d.sentences+' 句，下一段生效'):d.error); };
-$('btnSaveNow').onclick = async () => { const r=await api('/api/script',{text:$('scriptBox').value,apply_now:true}); const d=await r.json(); alert(d.ok?('已生效，共 '+d.sentences+' 句，从头播放'):d.error); getState(); };
+$('btnPause').onclick = (e) => act('btnPause', '暂停/继续', async () => {
+  const s = await (await api('/api/state')).json();
+  await postJSON('/api/control', {action: s.paused ? 'resume' : 'pause'});
+  getState(); return s.paused ? '已继续播放' : '已暂停（再点一次继续）';
+});
+$('btnSkip').onclick = () => act('btnSkip', '跳句', async () => {
+  await postJSON('/api/control', {action: 'skip'}); getState(); return '已跳过当前句';
+});
+$('btnRewind').onclick = () => act('btnRewind', '从头重播', async () => {
+  await postJSON('/api/control', {action: 'rewind'}); getState(); return '已从头重播（走缓存，不再请求百炼）';
+});
+$('btnRoom').onclick = () => act('btnRoom', '切房', async () => {
+  const v = $('roomInput').value.trim(); if (!v) throw new Error('请输入直播间号');
+  await postJSON('/api/room', {room: v}); $('roomInput').value = ''; getState();
+  return '正在连接直播间 ' + v;
+});
+$('btnLoadScript').onclick = () => act('btnLoadScript', '载入稿', async () => {
+  const d = await (await api('/api/script')).json(); $('scriptBox').value = d.text;
+  return '已载入当前稿';
+});
+$('btnSaveScript').onclick = () => act('btnSaveScript', '保存稿', async () => {
+  const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: false});
+  return '已保存 ' + d.sentences + ' 句，本轮播完后生效';
+});
+$('btnSaveNow').onclick = () => act('btnSaveNow', '保存并播放', async () => {
+  const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: true});
+  getState(); return '已生效 ' + d.sentences + ' 句，从头开始播';
+});
 function parseKw(id) {
   const v = $(id).value.trim();
   if (!v) return undefined;
   const a = v.split(',').map(x => parseFloat(x));
   return (a.length === 2 && isFinite(a[0]) && isFinite(a[1])) ? a : undefined;
 }
-$('btnParams').onclick = async () => {
+$('btnParams').onclick = () => act('btnParams', '应用参数', async () => {
   const w = $('windowInput').value.split(',').map(x=>parseFloat(x));
   const pkw = {};
   for (const k of ['gift','chat','follow','member','like']) {
     const v = parseKw('kw_' + k);
     if (v) pkw[k] = v;
   }
-  await api('/api/params', {voice: $('voiceSel').value, rate: parseFloat($('rateInput').value),
+  const pf = parseInt($('prefetchInput').value);
+  await postJSON('/api/params', {voice: $('voiceSel').value, rate: parseFloat($('rateInput').value),
     min_gap: parseFloat($('minGapInput').value),
     window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined,
-    per_kind_windows: Object.keys(pkw).length ? pkw : undefined});
-  getState();
-};
+    per_kind_windows: Object.keys(pkw).length ? pkw : undefined,
+    prefetch_ahead: isFinite(pf) ? pf : undefined});
+  getState(); return '参数已生效（改音色/语速会让旧缓存失效，按需重新合成）';
+});
+// ---- 预生成 ----
+$('btnPrefetchN').onclick = () => act('btnPrefetchN', '预生成', async () => {
+  const n = parseInt($('prefetchInput').value);
+  if (!isFinite(n) || n < 1) throw new Error('先在输入框填要预生成的句数（1–20）');
+  const d = await postJSON('/api/prefetch', {limit: n});
+  getState(); return d.queued ? ('已排队预生成 ' + d.queued + ' 句') : '这些句子都已就绪，无需再生成';
+});
+$('btnPrefetchAll').onclick = () => act('btnPrefetchAll', '预生成整稿', async () => {
+  const d = await postJSON('/api/prefetch', {limit: 'all'});
+  getState(); return d.queued ? ('已排队预生成整稿 ' + d.queued + ' 句') : '整稿音频都已就绪，循环将零请求';
+});
 // ---- 百炼 Key ----
-$('btnApiKey').onclick = async () => {
+$('btnApiKey').onclick = () => act('btnApiKey', '保存 Key', async () => {
   const key = $('apiKeyInput').value.trim();
-  if (!key) { $('apiKeyHint').textContent = 'Key 不能为空'; return; }
-  const r = await api('/api/api_key', {key});
-  const d = await r.json();
-  $('apiKeyHint').textContent = d.ok ? '已保存，音色与合成即刻可用' : ('失败: ' + d.error);
-  if (d.ok) { $('apiKeyInput').value=''; loadVoices(); }
-  getState();
-};
+  if (!key) throw new Error('Key 不能为空');
+  await postJSON('/api/api_key', {key});
+  $('apiKeyInput').value = ''; $('apiKeyHint').textContent = '';
+  loadVoices(); getState(); return 'Key 已保存，音色与合成即刻可用';
+});
 
 // ---- 录音 / 选文件 → 生成新音色 ----
 let mediaStream = null, recorder = null, recChunks = [], recMime = '', recStart = 0;
@@ -292,9 +386,9 @@ $('voiceFile').onchange = () => {
   };
   rd.readAsDataURL(f);
 };
-$('btnClone').onclick = async () => {
+$('btnClone').onclick = () => act('btnClone', '生成新音色', async () => {
   const prefix = $('voicePrefix').value.trim().toLowerCase();
-  if (!/^[a-z0-9]{1,9}$/.test(prefix)) { $('cloneHint').textContent = '音色名用小写字母数字，<10 位'; return; }
+  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名用小写字母数字，<10 位');
   let payload = {prefix};
   if (window._recB64) { payload.audio_base64 = window._recB64; payload.format = window._recFmt; }
   else if (window._recBlob && window._recBlob.size) {
@@ -302,19 +396,18 @@ $('btnClone').onclick = async () => {
     let bin = '', u = new Uint8Array(buf);
     for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
     payload.audio_base64 = btoa(bin); payload.format = window._recFmt || 'webm';
-  } else { $('cloneHint').textContent = '先录音或选择音频文件（10–20 秒连贯朗读）'; return; }
-  $('btnClone').disabled = true; $('cloneHint').textContent = '生成中…';
-  const r = await api('/api/clone_voice', payload);
-  const d = await r.json();
-  $('btnClone').disabled = false;
-  if (!d.ok) { $('cloneHint').textContent = '生成失败: ' + d.error; return; }
-  $('cloneHint').textContent = '已生成音色 ' + d.voice_id + '，正在试听…';
+  } else throw new Error('先录音或选择音频文件（10–20 秒连贯朗读）');
+  $('cloneHint').textContent = '生成中…';
+  const d = await postJSON('/api/clone_voice', payload);
   await loadVoices();
   $('voiceSel').value = d.voice_id;
-  const pr = await api('/api/preview_voice', {voice: d.voice_id, text: '大家好，这是用我的声音生成的新音色，欢迎来到直播间。'});
-  if (pr.ok) { const b = await pr.blob(); new Audio(URL.createObjectURL(b)).play(); }
+  try {
+    const r = await api('/api/preview_voice', {voice: d.voice_id, text: '大家好，这是用我的声音生成的新音色，欢迎来到直播间。'});
+    if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
+  } catch (e) {}
   $('cloneHint').textContent = '新音色已生成并选中：' + d.voice_id;
-};
+  return '新音色已生成并选中，正在试听';
+});
 async function loadVoices() {
   try {
     const r = await api('/api/voices'); const d = await r.json();
@@ -331,18 +424,19 @@ async function loadVoices() {
   } catch (e) {}
 }
 
-$('btnTtsTest').onclick = async () => {
-  const text = $('ttsTestInput').value.trim(); if (!text) return;
-  $('ttsErr').textContent = '合成中…';
+$('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
+  const text = $('ttsTestInput').value.trim(); if (!text) throw new Error('先输入试听文字');
   const r = await api('/api/tts_test', {text});
-  if (r.ok) { const blob=await r.blob(); $('ttsErr').textContent=''; new Audio(URL.createObjectURL(blob)).play(); }
-  else { const d=await r.json().catch(()=>({error:'失败'})); $('ttsErr').textContent='试听失败: '+d.error; }
-};
+  if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || '合成失败'); }
+  const blob = await r.blob(); new Audio(URL.createObjectURL(blob)).play();
+  return '试听音频已生成（' + Math.round(blob.size/1024) + 'KB）';
+});
 
 // 初始化参数输入框（从 state 拉当前值）
 (async () => { const r=await api('/api/state'); const s=await r.json();
   $('rateInput').value = s.params.rate; $('minGapInput').value = s.params.min_gap;
   $('windowInput').value = s.params.window.join(',');
+  $('prefetchInput').value = (s.prefetch_ahead != null ? s.prefetch_ahead : 3);
   if (s.params.voice) $('voiceSel').value = s.params.voice;
   for (const k of ['gift','chat','follow','member','like']) {
     const v = (s.params.per_kind_windows || {})[k];

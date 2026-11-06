@@ -52,6 +52,12 @@ class Orchestrator:
         self._tts_cache: dict[str, bytes] = {}
         self.tts_calls = 0      # 真实调用百炼次数
         self.cache_hits = 0     # 缓存命中（复用音频）次数
+        self._tts_lock = threading.Lock()
+        self.prefetch_ahead = int(os.environ.get("AIRADIO_PREFETCH", "3"))  # 提前预生成的句数
+        self._prefetch_thread: threading.Thread | None = None
+        self.prefetch_pending = 0
+        self.prefetch_done = 0
+        self.cache_size_peak = 0
 
     # ---------- 控制 API（供 web 控制台 / CLI 调用） ----------
 
@@ -107,8 +113,12 @@ class Orchestrator:
     def update_params(self, *, voice: str | None = None, model: str | None = None,
                       rate: float | None = None, min_gap: float | None = None,
                       window: tuple | list | None = None,
-                      per_kind_windows: dict | None = None) -> None:
+                      per_kind_windows: dict | None = None,
+                      prefetch_ahead: int | None = None) -> None:
         cfg = self.scheduler.cfg
+        if prefetch_ahead is not None:
+            self.prefetch_ahead = max(0, min(20, int(prefetch_ahead)))
+            self.log_append(f"params: 自动预生成句数={self.prefetch_ahead}")
         if min_gap is not None:
             cfg.min_gap_s = max(0.0, float(min_gap))
         if window is not None:
@@ -173,6 +183,12 @@ class Orchestrator:
     def snapshot(self, events_n: int = 40, log_n: int = 40) -> dict:
         room = self.collector.room
         cfg = self.scheduler.cfg
+        speech_total = sum(1 for s in self.segments if s.kind == "speech")
+        prefix = f"{self.model}|{self.voice}|{self.speech_rate}|"
+        with self._tts_lock:
+            cached_now = sum(
+                1 for idx, s in enumerate(self.segments)
+                if s.kind == "speech" and (prefix + self._seg_cache_key(idx, s)) in self._tts_cache)
         return {
             "status": self.status,
             "room": {
@@ -196,6 +212,14 @@ class Orchestrator:
             "tts_calls": self.tts_calls,
             "cache_hits": self.cache_hits,
             "cache_size": len(self._tts_cache),
+            "prefetch_ahead": self.prefetch_ahead,
+            "prefetch_pending": self.prefetch_pending,
+            "prefetch_done": self.prefetch_done,
+            "prefetch_running": bool(self._prefetch_thread and self._prefetch_thread.is_alive()),
+            "cache_ready": cached_now,        # 本稿已预生成/已缓存的正文句数
+            "cache_total": speech_total,      # 本稿正文句总数
+            "seg_index": self._seg_i,
+            "seg_count": len(self.segments),
             "tts_error": (self.tts.last_error if self.tts else
                           (self.tts_init_error or ("(dry 模式，未合成)" if self.sink_name == "dry" else ""))),
             "api_key_set": self.has_api_key(),
@@ -254,23 +278,99 @@ class Orchestrator:
     def _synth(self, texts: list[str]) -> bytes:
         if self.tts is None:  # dry 模式：不合成，只走调度
             return b""
-        self.tts_calls += 1
-        return self.tts.synth(texts)
+        with self._tts_lock:
+            self.tts_calls += 1
+            return self.tts.synth(texts)
 
     def _synth_cached(self, key: str, texts: list[str]) -> bytes:
         """文本没变就用缓存音频（循环重播不再请求百炼）；只有新内容才真实合成。"""
         cache_key = f"{self.model}|{self.voice}|{self.speech_rate}|{key}"
-        if cache_key in self._tts_cache:
-            self.cache_hits += 1
-            return self._tts_cache[cache_key]
+        with self._tts_lock:
+            if cache_key in self._tts_cache:
+                self.cache_hits += 1
+                return self._tts_cache[cache_key]
         audio = self._synth(texts)
         if audio:
-            self._tts_cache[cache_key] = audio
-            if len(self._tts_cache) > 400:
-                # 只保留最近合成的，防止极长场次内存增长
-                for k in list(self._tts_cache)[:100]:
-                    self._tts_cache.pop(k, None)
+            with self._tts_lock:
+                self._tts_cache[cache_key] = audio
+                self.cache_size_peak = max(self.cache_size_peak, len(self._tts_cache))
+                if len(self._tts_cache) > 400:
+                    # 只保留最近合成的，防止极长场次内存增长
+                    for k in list(self._tts_cache)[:100]:
+                        self._tts_cache.pop(k, None)
         return audio
+
+    # ---------- 预生成（提前把后面几句合成好，播放时不被 TTS 拖节拍） ----------
+
+    def _seg_cache_key(self, idx: int, seg) -> str:
+        return f"seg:{idx}:{seg.text}"
+
+    def _prefetch_todo(self, start: int, limit: int | None):
+        todo = []
+        end = len(self.segments) if limit is None else min(start + limit, len(self.segments))
+        for j in range(start, end):
+            s = self.segments[j]
+            if s.kind != "speech":
+                continue  # 固定话术/mark 依赖实时互动，不预生成
+            key = f"{self.model}|{self.voice}|{self.speech_rate}|{self._seg_cache_key(j, s)}"
+            if key not in self._tts_cache:
+                todo.append((j, key, s.text))
+        return todo
+
+    def prefetch_script(self, limit: int | None = 0) -> int:
+        """显式预生成：limit=None 整稿（从第 1 句起），limit>0 从当前位置起 N 句。返回排队句数。"""
+        if self.tts is None:
+            raise ValueError("未配置百炼 API Key，无法预生成")
+        if self._prefetch_thread and self._prefetch_thread.is_alive():
+            raise ValueError("已有预生成任务在跑，稍后再试")
+        start = 0 if limit is None else self._seg_i
+        todo = self._prefetch_todo(start, limit)
+        if not todo:
+            return 0
+        with self._lock:
+            self.prefetch_pending = len(todo)
+            self.prefetch_done = 0
+        self.log_append(f"prefetch: 预生成 {len(todo)} 句"
+                        + ("（整稿）" if limit is None else f"（自第{self._seg_i + 1}句起）"))
+        self._prefetch_thread = threading.Thread(
+            target=self._prefetch_worker, args=(todo,), daemon=True)
+        self._prefetch_thread.start()
+        return len(todo)
+
+    def _prefetch_ahead(self, i: int) -> None:
+        """播放间隙自动把接下来 prefetch_ahead 个'正文句'先合成进缓存。"""
+        n = self.prefetch_ahead
+        if n <= 0 or self.tts is None:
+            return
+        todo = self._prefetch_todo(i, n)
+        if not todo:
+            return
+        if self._prefetch_thread and self._prefetch_thread.is_alive():
+            return  # 一次只跑一个预生成任务
+        with self._lock:
+            self.prefetch_pending = len(todo)
+        self.log_append(f"prefetch: 自动预生成 {len(todo)} 句（{','.join(str(j) for j, _, _ in todo)}）")
+        self._prefetch_thread = threading.Thread(
+            target=self._prefetch_worker, args=(todo,), daemon=True)
+        self._prefetch_thread.start()
+
+    def _prefetch_worker(self, todo) -> None:
+        try:
+            for idx, key, text in todo:
+                if self._stop.is_set() or self._restart:
+                    return
+                audio = self._synth([text])
+                if not audio:
+                    self.log_append(f"prefetch: 第{idx}句合成失败 "
+                                    f"{self.tts.last_error if self.tts else ''}")
+                    return
+                with self._tts_lock:
+                    self._tts_cache[key] = audio
+                with self._lock:
+                    self.prefetch_done += 1
+                    self.prefetch_pending = max(0, self.prefetch_pending - 1)
+        except Exception as e:
+            self.log_append(f"prefetch error: {type(e).__name__}: {e}")
 
     def _play_pass(self):
         i = self._seg_i
@@ -290,7 +390,7 @@ class Orchestrator:
             if seg.kind == "speech":
                 # 稿子未变的句子：首轮合成一次，后续循环直接复用音频
                 texts = [seg.text]
-                cache_key = f"seg:{i - 1}:{seg.text}"
+                cache_key = self._seg_cache_key(i - 1, seg)
             else:  # mark：固定话术模板，占位符没被互动数据填时也能缓存
                 latest = self.queue.items[-1] if self.queue.items else None
                 text = self.scheduler.render_mark(seg.text, latest)
@@ -300,6 +400,7 @@ class Orchestrator:
             self.chunk_writer.write(kind, " ".join(texts), audio or b"")
             self.log_append(f"play[{kind}]: {' '.join(texts)}")
             est = self._estimate_elapsed_s(texts)
+            self._prefetch_ahead(i)  # 当前句播出的这段时间，后台先合成后面几句
             time.sleep(min(8.0, est))  # 按播报时长节拍推进
             # 句边界：能不能插播？（看下一个边界是否受保护）
             nxt_protected = self._next_boundary_protected(i)
