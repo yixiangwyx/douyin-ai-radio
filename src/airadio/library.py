@@ -81,8 +81,35 @@ class Library:
         return [{"title": s.get("title", ""), "text": s.get("text", "")}
                 for s in self.data["scripts"] if (s.get("text") or "").strip()]
 
+    # ---- 话术/昵称/报时配置（前端可编辑，重启后还在） ----
+    def get_phrases(self) -> dict:
+        return dict(self.data.get("phrases") or {})
+
+    def save_phrases(self, patch: dict) -> dict:
+        cur = self.data.get("phrases") or {}
+        for key, value in (patch or {}).items():
+            if value is not None:
+                cur[key] = value
+        self.data["phrases"] = cur
+        self._save()
+        return dict(cur)
+
+    # ---- 上次用的模型/音色（重启后自动恢复，不用每次重选） ----
+    def save_runtime(self, patch: dict) -> dict:
+        cur = self.data.get("runtime") or {}
+        for key, value in (patch or {}).items():
+            if value:
+                cur[key] = value
+        self.data["runtime"] = cur
+        self._save()
+        return dict(cur)
+
+    def get_runtime(self) -> dict:
+        return dict(self.data.get("runtime") or {})
+
     def snapshot(self) -> dict:
         return {
+            "phrases": self.get_phrases(),
             "topics": [{k: t.get(k) for k in ("id", "title", "note", "used")} | {"created": t.get("created", 0)}
                        for t in self.data["topics"]],
             "scripts": [{k: s.get(k) for k in ("id", "title", "text", "source", "sentences", "created")}

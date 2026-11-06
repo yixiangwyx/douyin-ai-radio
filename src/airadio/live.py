@@ -17,8 +17,9 @@ from urllib.parse import quote
 import requests
 
 from .events import InteractionEvent, InteractionQueue
-from .proto import (ChatMessage, EmojiChatMessage, GiftMessage, LikeMessage,
-                    MemberMessage, PushFrame, Response, SocialMessage)
+from .proto import (ChatMessage, EmojiChatMessage, FansclubMessage, GiftMessage,
+                    LikeMessage, MemberMessage, PushFrame, Response,
+                    UpdateFanTicketMessage, SocialMessage)
 from .sign import signature_for
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -31,6 +32,8 @@ TYPE_MAP = {
     "WebcastMemberMessage": ("member", MemberMessage),
     "WebcastLikeMessage": ("like", LikeMessage),
     "WebcastGiftMessage": ("gift", GiftMessage),
+    # 灯牌/粉丝团（点亮灯牌、加粉丝团、粉丝团升级）
+    "WebcastFansclubMessage": ("badge", FansclubMessage),
 }
 
 
@@ -207,6 +210,10 @@ class LiveCollector:
     def _to_event(self, kind: str, pm) -> InteractionEvent | None:
         if kind == "chat":
             return InteractionEvent(kind="chat", nick=self._nick(pm), content=pm.content)
+        if kind == "badge":
+            # 灯牌/粉丝团：content 是抖音自带文案（如"加入了粉丝团"），action 区分加入/升级
+            return InteractionEvent(kind="badge", nick=self._nick(pm),
+                                   content=getattr(pm, "content", "") or "")
         if kind == "follow":
             if getattr(pm, "action", 1) == 2:  # 取关不播
                 return None
@@ -217,7 +224,7 @@ class LiveCollector:
             return InteractionEvent(kind="like", nick=self._nick(pm))
         if kind == "gift":
             gift = pm.gift.name if pm.gift else ""
-            count = pm.repeatCount or 1
+            count = int(getattr(pm, "repeat_count", 0) or getattr(pm, "combo_count", 0) or 1)
             from .events import KNOWN_GIFT_VALUE
             value = KNOWN_GIFT_VALUE.get(gift, 0)
             return InteractionEvent(kind="gift", nick=self._nick(pm), gift=gift,

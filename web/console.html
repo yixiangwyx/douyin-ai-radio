@@ -138,39 +138,47 @@
 </div>
 
 <div class="card">
-  <b style="font-size:15px">语音与插播参数</b>
+  <b style="font-size:15px">语音模型与音色（可自由切换）</b>
   <div class="row">
     <input id="apiKeyInput" type="password" placeholder="百炼 API Key（sk-…）留空=用服务器 .env" style="flex:1">
     <button class="ghost" id="btnApiKey">保存 Key</button>
   </div>
   <div class="hint" id="apiKeyHint"></div>
   <div class="grid">
-    <div><label>百炼音色（cosyvoice-v2）</label>
-      <select id="voiceSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px">
-        <option value="longxiaochun_v2">longxiaochun_v2（女·标准）</option>
-        <option value="longxiaoxia_v2">longxiaoxia_v2（女·温柔）</option>
-        <option value="longwan_v2">longwan_v2（女·知性）</option>
-        <option value="longcheng_v2">longcheng_v2（男·青年）</option>
-        <option value="longshu_v2">longshu_v2（男·播音）</option>
-        <option value="longlaotie_v2">longlaotie_v2（男·东北）</option>
-      </select>
+    <div><label>语音模型</label>
+      <select id="modelSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px"></select>
+    </div>
+    <div><label>音色（随模型变化）</label>
+      <select id="voiceSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px"></select>
     </div>
     <div><label>语速 0.5–2.0</label><input id="rateInput" type="number" step="0.1" min="0.5" max="2"></div>
     <div><label>插播最小间隔（秒）</label><input id="minGapInput" type="number" step="5" min="5"></div>
     <div><label>全局默认随机窗口（秒）低,高</label><input id="windowInput" placeholder="60,150"></div>
   </div>
+  <div class="hint" id="modelHint">系统音色列表是按你这个账号实测过的（scripts/probe_voices.py 可重测）。<b>cosyvoice-v3.5 系列没有系统音色</b>：必须先在下面用「填提示词」或「录音」生成音色，再切到 v3.5。音色绑定生成时的模型，不能跨模型用。</div>
   <div style="border-top:1px solid #2b3641;margin-top:10px;padding-top:10px">
-    <b style="font-size:14px">生成新音色（复刻你自己的声音）</b>
-    <div class="row" style="margin-top:6px">
+    <b style="font-size:14px">生成新音色（两种都行：填提示词 / 录你自己的声音）</b>
+    <label style="margin-top:6px">方式 A · 填提示词描述想要的音色（不用录音）</label>
+    <div class="row" style="margin-top:4px">
+      <textarea id="voicePrompt" placeholder="例：一位三十岁左右的女性，声音温柔知性，语速偏慢，适合直播间的安抚式讲解" style="flex:1;min-height:64px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px"></textarea>
+    </div>
+    <div class="row" style="margin-top:4px">
+      <input id="voicePreview" placeholder="试听文本（生成时会用它出一段样例音，可改）" style="flex:1">
+    </div>
+    <div class="row" style="margin-top:4px">
+      <button class="ghost" id="btnDesignVoice">按提示词生成音色</button>
+    </div>
+    <label style="margin-top:8px">方式 B · 录你自己的声音（复刻）</label>
+    <div class="row" style="margin-top:4px">
       <button class="ghost" id="btnMic">🎙 录10–20秒</button>
       <span id="micTimer" class="status"></span>
       <input type="file" id="voiceFile" accept="audio/*" style="flex:1;min-height:38px">
     </div>
     <div class="row" style="margin-top:6px">
-      <input id="voicePrefix" placeholder="音色名（小写字母数字，如 xiangge）" style="flex:1">
-      <button id="btnClone">生成新音色</button>
+      <input id="voicePrefix" placeholder="音色名：英文小写字母数字，&lt;10位（如 xiangge01）" style="flex:1">
+      <button id="btnClone">用录音生成音色</button>
     </div>
-    <div class="hint">录 10–20 秒连贯朗读（至少连续说 5 秒、别带背景音乐）→ 生成后自动选中并试听。已生成的复刻音色在列表最上方。</div>
+    <div class="hint">录音要求：安静环境、离麦克风近、连续说 10–20 秒（不要音乐、不要只哼）。提交前服务器会先本地体检时长与有效语音，太短或听不出说话会直接告诉你原因。</div>
     <div class="hint" id="cloneHint"></div>
   </div>
   <div style="border-top:1px solid #2b3641;margin-top:10px;padding-top:10px">
@@ -191,6 +199,7 @@
   <div class="grid">
     <div><label>礼物 gift</label><input id="kw_gift" placeholder="15,40"></div>
     <div><label>弹幕 chat</label><input id="kw_chat" placeholder="20,50"></div>
+    <div><label>灯牌/粉丝团 badge</label><input id="kw_badge" placeholder="20,50"></div>
     <div><label>关注 follow</label><input id="kw_follow" placeholder="30,80"></div>
     <div><label>进场 member</label><input id="kw_member" placeholder="45,120"></div>
     <div><label>点赞 like</label><input id="kw_like" placeholder="90,180"></div>
@@ -201,7 +210,47 @@
     <button class="ghost" id="btnTtsTest">试听</button>
   </div>
   <div class="hint" id="ttsErr"></div>
-  <div class="hint">优先级：礼物&gt;弹幕&gt;关注&gt;进场&gt;点赞；同一批到期只念最新的几条。稿子没变时循环复用已合成音频（只对新插播内容调 TTS），换音色/语速后自动重新合成。</div>
+  <div class="hint">优先级：礼物&gt;弹幕&gt;灯牌&gt;关注&gt;进场&gt;点赞；同一批到期只念最新的几条。稿子没变时循环复用已合成音频（只对新插播内容调 TTS），换音色/语速后自动重新合成。</div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">互动话术（每类可写多条，随机播）</b>
+  <div class="hint" id="phHint" style="margin-top:6px"></div>
+  <label style="margin-top:6px">占位符（点一下插到正在编辑的话术框里）</label>
+  <div id="phChips" class="topiclist"></div>
+  <div class="hint">每类话术一行一条，播放时随机选一条；随时改，保存后立刻生效。<code>[昵称]</code> 会按下面的昵称规则处理；时间占位符在任何话术里都能用（包括 <code>[[待插:…]]</code>）。</div>
+  <div id="phraseEditors"></div>
+  <div class="row" style="margin-top:8px">
+    <button id="btnSavePhrases">保存话术（立即生效）</button>
+    <button class="ghost" id="btnReloadPhrases">重新载入</button>
+  </div>
+  <div class="hint" id="phraseHint"></div>
+
+  <div style="border-top:1px solid #2b3641;margin-top:12px;padding-top:10px">
+    <b style="font-size:14px">读昵称的规则</b>
+    <div class="row" style="margin-top:6px">
+      <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="nickHanChk" style="width:auto;min-height:auto">只读汉字（emoji/字母/数字跳过）</label>
+      <div style="flex:1"><label>最多读几个字</label><input id="nickMaxInput" type="number" min="1" max="20"></div>
+    </div>
+    <div class="hint">例：昵称「兴旺🌹的大刘啊」→ 只读汉字 + 最多 3 字 = 「兴旺的」。全 emoji/全字母的昵称会读成「直播间的朋友」，不会出现半句。</div>
+  </div>
+
+  <div style="border-top:1px solid #2b3641;margin-top:12px;padding-top:10px">
+    <b style="font-size:14px">随机报时（在句子边界随机插播当前时间）</b>
+    <div class="row" style="margin-top:6px">
+      <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="announceChk" style="width:auto;min-height:auto">开启随机报时</label>
+      <div style="flex:1"><label>间隔下限（秒）</label><input id="annMinInput" type="number" min="60" step="60"></div>
+      <div style="flex:1"><label>间隔上限（秒）</label><input id="annMaxInput" type="number" min="120" step="60"></div>
+    </div>
+    <label style="margin-top:6px">报时话术（一行一条，随机选；写时间占位符）</label>
+    <textarea id="timePhrases" style="width:100%;min-height:96px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px"></textarea>
+    <div class="hint">例：<code>现在是[时点][时分]，刚进来的朋友先点个关注。</code> → 实际读成「现在是19点05分…」。报时同样受上面的"插播最小间隔"约束，不会连着念。</div>
+  </div>
+
+  <div style="border-top:1px solid #2b3641;margin-top:12px;padding-top:10px">
+    <b style="font-size:14px">长时间没互动时的兜底话术</b>
+    <textarea id="fallbackPhrases" style="width:100%;min-height:72px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px"></textarea>
+  </div>
 </div>
 
 <div class="card">
@@ -486,14 +535,15 @@ function parseKw(id) {
 $('btnParams').onclick = () => act('btnParams', '应用参数', async () => {
   const w = $('windowInput').value.split(',').map(x=>parseFloat(x));
   const pkw = {};
-  for (const k of ['gift','chat','follow','member','like']) {
+  for (const k of ['gift','chat','badge','follow','member','like']) {
     const v = parseKw('kw_' + k);
     if (v) pkw[k] = v;
   }
   const pf = parseInt($('prefetchInput').value);
   const mg = parseInt($('mergeInput').value);
   const gp = parseInt($('gapInput').value);
-  await postJSON('/api/params', {voice: $('voiceSel').value, rate: parseFloat($('rateInput').value),
+  await postJSON('/api/params', {model: $('modelSel').value, voice: $('voiceSel').value,
+    rate: parseFloat($('rateInput').value),
     min_gap: parseFloat($('minGapInput').value),
     window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined,
     per_kind_windows: Object.keys(pkw).length ? pkw : undefined,
@@ -520,7 +570,7 @@ $('btnApiKey').onclick = () => act('btnApiKey', '保存 Key', async () => {
   if (!key) throw new Error('Key 不能为空');
   await postJSON('/api/api_key', {key});
   $('apiKeyInput').value = ''; $('apiKeyHint').textContent = '';
-  loadVoices(); getState(); return 'Key 已保存，音色与合成即刻可用';
+  loadVoiceCatalog(); getState(); return 'Key 已保存，音色与合成即刻可用';
 });
 
 // ---- 录音 / 选文件 → 生成新音色 ----
@@ -570,9 +620,20 @@ $('voiceFile').onchange = () => {
   };
   rd.readAsDataURL(f);
 };
-$('btnClone').onclick = () => act('btnClone', '生成新音色', async () => {
+async function applyCloneResult(d) {
+  await loadVoiceCatalog();
+  $('voiceSel').value = d.voice_id;
+  try {
+    const r = await api('/api/preview_voice', {voice: d.voice_id, model: d.target_model,
+      text: $('voicePreview').value.trim() || '大家好，这是新的音色，欢迎来到直播间。'});
+    if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
+  } catch (e) {}
+  $('cloneHint').textContent = '新音色已生成并选中（' + d.target_model + '）：' + d.voice_id
+    + '　→ 想马上用它播稿，点上面「应用参数」';
+}
+$('btnClone').onclick = () => act('btnClone', '生成音色', async () => {
   const prefix = $('voicePrefix').value.trim().toLowerCase();
-  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名用小写字母数字，<10 位');
+  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位（如 xiangge01）');
   let payload = {prefix};
   if (window._recB64) { payload.audio_base64 = window._recB64; payload.format = window._recFmt; }
   else if (window._recBlob && window._recBlob.size) {
@@ -580,31 +641,65 @@ $('btnClone').onclick = () => act('btnClone', '生成新音色', async () => {
     let bin = '', u = new Uint8Array(buf);
     for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
     payload.audio_base64 = btoa(bin); payload.format = window._recFmt || 'webm';
-  } else throw new Error('先录音或选择音频文件（10–20 秒连贯朗读）');
-  $('cloneHint').textContent = '生成中…';
+  } else throw new Error('先录音或选择音频文件（安静环境连续说 10–20 秒）');
+  $('cloneHint').textContent = '生成中…（会先本地检查录音时长）';
   const d = await postJSON('/api/clone_voice', payload);
-  await loadVoices();
-  $('voiceSel').value = d.voice_id;
-  try {
-    const r = await api('/api/preview_voice', {voice: d.voice_id, text: '大家好，这是用我的声音生成的新音色，欢迎来到直播间。'});
-    if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
-  } catch (e) {}
-  $('cloneHint').textContent = '新音色已生成并选中：' + d.voice_id;
-  return '新音色已生成并选中，正在试听';
+  await applyCloneResult(d);
+  return '录音音色已生成，已自动选中并试听';
 });
-async function loadVoices() {
-  try {
-    const r = await api('/api/voices'); const d = await r.json();
-    const sel = $('voiceSel'); const cur = sel.value;
-    Array.from(sel.querySelectorAll('option[data-cloned]')).forEach(o => o.remove());
-    const first = sel.querySelector('option');
-    for (const v of (d.voices || [])) {
-      const o = document.createElement('option');
-      o.value = v.voice_id; o.dataset.cloned = '1';
-      o.textContent = '🎙 ' + v.voice_id + (v.status && v.status !== 'READY' ? '（' + v.status + '）' : '');
-      sel.insertBefore(o, first);
+$('btnDesignVoice').onclick = () => act('btnDesignVoice', '生成音色', async () => {
+  const prompt = $('voicePrompt').value.trim();
+  if (prompt.length < 5) throw new Error('先写音色描述（性别/年龄/语气/用途）');
+  const prefix = ($('voicePrefix').value.trim() || 'voice' + Math.floor(Math.random()*900+100)).toLowerCase();
+  if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位');
+  const payload = {prefix, prompt, preview_text: $('voicePreview').value.trim()};
+  $('cloneHint').textContent = '按提示词生成中…';
+  const d = await postJSON('/api/clone_voice', payload);
+  await applyCloneResult(d);
+  return '提示词音色已生成，已自动选中并试听';
+});
+
+let MODEL_CATALOG = [];
+async function loadVoiceCatalog() {
+  const r = await api('/api/models'); const d = await r.json();
+  MODEL_CATALOG = d.models || [];
+  const ms = $('modelSel');
+  if (!ms.options.length) {
+    for (const m of MODEL_CATALOG) {
+      const o = document.createElement('option'); o.value = m.model;
+      o.textContent = m.label; ms.appendChild(o);
     }
-    if (cur) sel.value = cur;
+    ms.onchange = () => fillVoiceOptions();
+  }
+  ms.value = d.current.model || (MODEL_CATALOG[0] || {}).model || '';
+  fillVoiceOptions(d.current.voice);
+}
+function fillVoiceOptions(keep) {
+  const model = $('modelSel').value;
+  const info = MODEL_CATALOG.find(m => m.model === model) || {};
+  const vs = $('voiceSel'); vs.innerHTML = '';
+  for (const v of (info.system_voices || [])) {
+    const o = document.createElement('option'); o.value = v.voice;
+    o.textContent = v.voice + '（' + v.name + '·' + v.trait + '）'; vs.appendChild(o);
+  }
+  if (info.needs_custom_voice || !(info.system_voices || []).length) {
+    const o = document.createElement('option'); o.value = ''; o.dataset.empty = '1';
+    o.textContent = '（这个模型没有系统音色：先用提示词或录音生成音色）'; vs.appendChild(o);
+  }
+  loadClonedVoices(model, keep);
+}
+async function loadClonedVoices(model, keep) {
+  try {
+    const r = await api('/api/voices?model=' + encodeURIComponent(model)); const d = await r.json();
+    const vs = $('voiceSel');
+    const first = vs.querySelector('option');
+    for (const v of (d.voices || [])) {
+      if ((v.voice_id || '').length < 4) continue;
+      const o = document.createElement('option'); o.value = v.voice_id; o.dataset.cloned = '1';
+      o.textContent = '🎙 自建 ' + v.voice_id + (v.status && v.status !== 'READY' ? '（' + v.status + '）' : '');
+      vs.insertBefore(o, first);
+    }
+    if (keep) vs.value = keep;
   } catch (e) {}
 }
 
@@ -615,6 +710,80 @@ $('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
   const blob = await r.blob(); new Audio(URL.createObjectURL(blob)).play();
   return '试听音频已生成（' + Math.round(blob.size/1024) + 'KB）';
 });
+
+// ---- 互动话术（每类多条随机）+ 昵称规则 + 随机报时 ----
+const PHRASE_KINDS = [
+  ['gift', '礼物'], ['chat', '弹幕'], ['badge', '灯牌/粉丝团'],
+  ['follow', '关注'], ['member', '进场'], ['like', '点赞'],
+];
+let phraseLoaded = null;
+async function loadPhrases() {
+  const [pr, ph] = await Promise.all([api('/api/phrases').then(r => r.json()),
+                                     api('/api/placeholders').then(r => r.json())]);
+  phraseLoaded = pr;
+  const chips = $('phChips'); chips.innerHTML = '';
+  for (const p of (ph.placeholders || [])) {
+    const b = document.createElement('button'); b.className = 'ghost'; b.type = 'button';
+    b.style.cssText = 'padding:6px 10px;min-height:auto;font-size:12px';
+    b.textContent = p.token;
+    b.title = p.desc + '　例：' + p.example;
+    b.onclick = () => insertPlaceholder(p.token);
+    chips.appendChild(b);
+  }
+  $('phHint').textContent = '占位符说明（悬停看例子）：' + (ph.examples || []).map(e => e.result).join(' ／ ');
+  const box = $('phraseEditors'); box.innerHTML = '';
+  const tpls = pr.templates || {};
+  for (const [kind, label] of PHRASE_KINDS) {
+    const labelEl = document.createElement('label');
+    labelEl.style.marginTop = '8px';
+    labelEl.textContent = label + ' 话术（一行一条，随机播）';
+    box.appendChild(labelEl);
+    const ta = document.createElement('textarea');
+    ta.id = 'ph_' + kind; ta.dataset.kind = kind; ta.className = 'phrase-ta';
+    ta.style.cssText = 'width:100%;min-height:76px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px;font-size:13px';
+    ta.value = (tpls[kind] || []).join('\n');
+    box.appendChild(ta);
+  }
+  $('nickHanChk').checked = pr.nick_han_only !== false;
+  $('nickMaxInput').value = pr.nick_max_chars != null ? pr.nick_max_chars : 8;
+  $('announceChk').checked = !!pr.announce_time;
+  const iv = pr.announce_interval_s || [900, 1800];
+  $('annMinInput').value = Math.round(iv[0]); $('annMaxInput').value = Math.round(iv[1]);
+  $('timePhrases').value = (pr.time_templates || []).join('\n');
+  $('fallbackPhrases').value = (pr.fallback_templates || []).join('\n');
+  $('phraseHint').textContent = '上次保存的话术已载入（存在 data/library.json，重启也在）。改了不保存不会生效。';
+}
+function insertPlaceholder(token) {
+  const ta = document.activeElement;
+  if (!ta || ta.tagName !== 'TEXTAREA') { toast('先点进要插入的话术框里，再点占位符'); return; }
+  const pos = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+  ta.value = ta.value.slice(0, pos) + token + ta.value.slice(pos);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = pos + token.length;
+}
+function linesOf(id) {
+  return ($(id).value || '').split('\n').map(s => s.trim()).filter(Boolean);
+}
+$('btnSavePhrases').onclick = () => act('btnSavePhrases', '保存话术', async () => {
+  const templates = {};
+  for (const [kind] of PHRASE_KINDS) { const v = linesOf('ph_' + kind); if (v.length) templates[kind] = v; }
+  const body = {
+    templates,
+    nick_han_only: $('nickHanChk').checked,
+    nick_max_chars: parseInt($('nickMaxInput').value),
+    announce_time: $('announceChk').checked,
+    announce_interval_s: [parseInt($('annMinInput').value), parseInt($('annMaxInput').value)],
+    time_templates: linesOf('timePhrases'),
+    fallback_templates: linesOf('fallbackPhrases'),
+  };
+  if (!isFinite(body.nick_max_chars)) delete body.nick_max_chars;
+  if (!isFinite(body.announce_interval_s[0]) || !isFinite(body.announce_interval_s[1])) delete body.announce_interval_s;
+  const d = await postJSON('/api/phrases', body);
+  await loadPhrases();
+  const n = Object.values(templates).reduce((a, v) => a + v.length, 0);
+  return '话术已保存并立即生效：互动话术 ' + n + ' 条、报时话术 ' + body.time_templates.length
+         + ' 条（' + (body.announce_time ? '随机报时开' : '随机报时关') + '）';
+});
+$('btnReloadPhrases').onclick = () => act('btnReloadPhrases', '载入话术', async () => { await loadPhrases(); return '已重新载入服务器上的话术'; });
 
 // 初始化参数输入框（从 state 拉当前值）
 (async () => { const r=await api('/api/state'); const s=await r.json();
@@ -627,13 +796,15 @@ $('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
   $('rotateChk').checked = !!s.rotate_enabled;
   $('rotateLines').value = (s.rotate_after_lines != null ? s.rotate_after_lines : 0);
   $('rotateMin').value = (s.rotate_after_s != null ? Math.round(s.rotate_after_s / 60) : 0);
+  await loadVoiceCatalog();
+  if (s.params.model) $('modelSel').value = s.params.model;
   if (s.params.voice) $('voiceSel').value = s.params.voice;
-  for (const k of ['gift','chat','follow','member','like']) {
+  for (const k of ['gift','chat','badge','follow','member','like']) {
     const v = (s.params.per_kind_windows || {})[k];
     if (v) $('kw_' + k).value = v.join(',');
   }
   $('apiKeyHint').textContent = s.api_key_set ? '' : '还没填百炼 API Key：在上方输入框填 sk-… 即可开始合成（无需 .env）。';
-  loadVoices();
+  loadPhrases();
   loadLibrary();
 })();
 setInterval(getState, 2000);

@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import threading
 from functools import partial
@@ -30,11 +31,109 @@ if _envp.exists():
 
 from airadio.orchestrator import Orchestrator  # noqa: E402
 from airadio.timeline import ScheduleConfig  # noqa: E402
+from airadio import models  # noqa: E402
+from airadio import placeholders  # noqa: E402
 from airadio.library import Library  # noqa: E402
 from airadio import generate as gen  # noqa: E402
 
 STATE: dict = {}
 LIB: Library = None  # type: ignore
+
+
+def _enroll_error_hint(text: str) -> str:
+    """把百炼的复刻报错翻译成人能照着改的话（都是实测过的错误码）。"""
+    hints = {
+        "prefix should be english letter and number": "音色名只能用英文小写字母或数字（中文名会被拒）",
+        "prefix should not be longer than 10 characters": "音色名要少于 10 位",
+        "AudioShortError": "参考音频里的有效语音太短：请录 10–20 秒连贯说话（不要只留环境声）",
+        "request asr failed": "这段录音百炼听不出说了什么：安静环境、离麦克风近一点、连续说话再试",
+        "InputDownloadFailed": "参考音频链接取不到（链接过期/需要登录），改用页面上的录音或选文件",
+        "Throttling": "请求太频繁，稍等几秒再点一次",
+        "QuotaExceeded": "该账号的复刻音色数量或额度到上限了",
+    }
+    for key, hint in hints.items():
+        if key in text:
+            return f"{hint}（原始：{text[:160]}）"
+    return f"百炼: {text[:200]}"
+
+
+def _prep_reference_audio(b64: str, fmt) -> str | tuple:
+    """浏览器录音/上传文件 → 百炼要的 24kHz 单声道 WAV data URI，并在本地先体检一遍。
+
+    本地体检的原因：百炼只回"audio too short / asr failed"，看不出是录太短还是没说话。
+    """
+    import base64 as _b64
+    import shutil
+    import subprocess
+    import tempfile
+
+    raw = _b64.b64decode(str(b64).split(",", 1)[-1])
+    if len(raw) > 10 * 1024 * 1024:
+        return (422, json.dumps({"error": "音频超过 10MB，录 10–20 秒就够"}))
+    suffix = str(fmt or "webm").lower().replace("mpeg", "mp3")
+    ffmpeg = shutil.which("ffmpeg")
+    ffprobe = shutil.which("ffprobe")
+    with tempfile.TemporaryDirectory() as td:
+        src = os.path.join(td, f"in.{suffix}")
+        dst = os.path.join(td, "out.wav")
+        with open(src, "wb") as f:
+            f.write(raw)
+        conv = subprocess.run([ffmpeg, "-y", "-i", src, "-ar", "24000", "-ac", "1",
+                              "-sample_fmt", "s16", dst], capture_output=True, text=True,
+                              timeout=60) if ffmpeg else None
+        usable = dst if (conv and conv.returncode == 0) else src
+        if conv is None:
+            usable = src  # 没装 ffmpeg：原样送上去（让百炼报错）
+        else:
+            # 体检：总时长 + 有效语音时长（去掉静音）
+            dur = _probe_duration(ffprobe, usable)
+            speech = _speech_seconds(ffmpeg, usable)
+            if dur is not None and dur < 4.0:
+                return (422, json.dumps({
+                    "error": f"录音只有 {dur:.1f} 秒，太短：请录 10–20 秒连贯朗读再提交"}))
+            if speech is not None and speech < 1.5:
+                return (422, json.dumps({
+                    "error": f"录了 {dur:.1f} 秒但几乎听不到说话（有效语音 {speech:.1f} 秒）："
+                             "请在安静环境里离麦克风近一点、连续说 10 秒以上"}))
+        return "data:audio/wav;base64," + _b64.b64encode(open(usable, "rb").read()).decode("ascii")
+
+
+def _probe_duration(ffprobe, path: str) -> float | None:
+    if not ffprobe:
+        return None
+    try:
+        r = subprocess.run([ffprobe, "-v", "error", "-show_entries", "format=duration",
+                           "-of", "default=nk=1:nw=1", path], capture_output=True, text=True,
+                           timeout=30)
+        return float(r.stdout.strip())
+    except Exception:
+        return None
+
+
+def _speech_seconds(ffmpeg, path: str) -> float | None:
+    """非静音时长（ffmpeg silencedetect 反推）。没有 ffmpeg 时返回 None（不拦）。"""
+    if not ffmpeg:
+        return None
+    try:
+        total = None
+        r = subprocess.run([ffmpeg, "-i", path, "-af", "silencedetect=n=-35dB:d=0.35",
+                           "-f", "null", "-"], capture_output=True, text=True, timeout=60)
+        text = r.stderr
+        dur = None
+        for line in text.splitlines():
+            if "Duration:" in line:
+                m = line.split("Duration:")[1].split(",")[0].strip()
+                h, mi, s = (m.split(":") + ["0"])[:3]
+                dur = int(h) * 3600 + int(mi) * 60 + float(s)
+                break
+        total = dur or 0.0
+        silent = 0.0
+        for line in text.splitlines():
+            if "silence_duration:" in line:
+                silent += float(line.split("silence_duration:")[1].split()[0])
+        return max(0.0, total - silent)
+    except Exception:
+        return None
 
 
 def load_dotenv_script(path: str) -> str:
@@ -76,11 +175,25 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/starter_topics":
             return self._send(200, json.dumps({"topics": [{"title": t, "note": n} for t, n in gen.STARTER_TOPICS]},
                                               ensure_ascii=False).encode())
+        if p == "/api/models":
+            # 可切换的语音模型 + 每个模型实测可用的系统音色
+            return self._send(200, json.dumps({"models": models.catalog(),
+                                               "current": {"model": self.orch.model,
+                                                          "voice": self.orch.voice}},
+                                              ensure_ascii=False).encode())
+        if p == "/api/placeholders":
+            return self._send(200, json.dumps(placeholders.doc(), ensure_ascii=False).encode())
+        if p == "/api/phrases":
+            return self._send(200, json.dumps(self.orch.snapshot()["phrases"],
+                                              ensure_ascii=False).encode())
         if p == "/api/voices":
-            # 列出该账号已复刻的音色（cosyvoice-v2）
+            # 列出该账号已生成（复刻/提示词设计）的音色；?model= 决定列哪个模型的
             if not self.orch.has_api_key():
                 return self._send(200, json.dumps({"voices": []}))
             import requests
+            query = self.path.split("?", 1)[1] if "?" in self.path else ""
+            want = dict(kv.split("=", 1) for kv in query.split("&") if "=" in kv)
+            target = (want.get("model") or self.orch.model).strip()
             api_key = self.orch.api_key or os.environ.get("DASHSCOPE_API_KEY")
             resp = requests.post(
                 "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
@@ -88,14 +201,14 @@ class Handler(BaseHTTPRequestHandler):
                 headers={"Authorization": f"Bearer {api_key}",
                          "Content-Type": "application/json"},
                 json={"model": "voice-enrollment",
-                      "input": {"action": "list_voice",
-                                "target_model": self.orch.model}})
+                      "input": {"action": "list_voice", "target_model": target}})
             voices = []
             if resp.status_code == 200:
                 for v in resp.json().get("output", {}).get("voice_list", []):
                     voices.append({"voice_id": v.get("voice_id", ""),
                                    "status": v.get("status", "")})
-            return self._send(200, json.dumps({"voices": voices}))
+            return self._send(200, json.dumps({"voices": voices, "target_model": target},
+                                              ensure_ascii=False).encode())
         if p.startswith("/chunks/"):
             fp = (ROOT / "out" / p.lstrip("/")).resolve()
             if not str(fp).startswith(str((ROOT / "out").resolve())) or not fp.is_file():
@@ -198,7 +311,38 @@ class Handler(BaseHTTPRequestHandler):
                     sentence_gap_ms=body.get("sentence_gap_ms"),
                     merge_sentences=body.get("merge_sentences"),
                     trim_silence=body.get("trim_silence"))
+                if body.get("model") or body.get("voice"):
+                    LIB.save_runtime({"model": self.orch.model, "voice": self.orch.voice})
                 return self._send(200, json.dumps({"ok": True}))
+            if p == "/api/phrases":
+                # 保存 + 即时生效：互动话术（多套随机）、昵称规则、随机报时、兜底话术
+                patch_body = {}
+                tpl = body.get("templates")
+                if isinstance(tpl, dict):
+                    patch_body["templates"] = {k: [str(x).strip() for x in (v or []) if str(x).strip()]
+                                               for k, v in tpl.items()}
+                if "nick_han_only" in body:
+                    patch_body["nick_han_only"] = bool(body["nick_han_only"])
+                if body.get("nick_max_chars") not in (None, ""):
+                    patch_body["nick_max_chars"] = int(body["nick_max_chars"])
+                if "announce_time" in body:
+                    patch_body["announce_time"] = bool(body["announce_time"])
+                iv = body.get("announce_interval_s")
+                if isinstance(iv, list) and len(iv) == 2:
+                    patch_body["announce_interval_s"] = [float(iv[0]), float(iv[1])]
+                for key in ("time_templates", "fallback_templates"):
+                    if isinstance(body.get(key), list):
+                        patch_body[key] = [str(x).strip() for x in body[key] if str(x).strip()]
+                self.orch.update_params(
+                    templates=patch_body.get("templates"),
+                    nick_han_only=patch_body.get("nick_han_only"),
+                    nick_max_chars=patch_body.get("nick_max_chars"),
+                    announce_time=patch_body.get("announce_time"),
+                    announce_interval_s=patch_body.get("announce_interval_s"),
+                    time_templates=patch_body.get("time_templates"),
+                    fallback_templates=patch_body.get("fallback_templates"))
+                saved = LIB.save_phrases(patch_body)
+                return self._send(200, json.dumps({"ok": True, "saved": saved}, ensure_ascii=False).encode())
             if p == "/api/prefetch":
                 n = body.get("limit")
                 limit = None if (n is None or n == "" or n == "all") else max(1, int(n))
@@ -232,71 +376,57 @@ class Handler(BaseHTTPRequestHandler):
                 self.orch.set_api_key(key)
                 return self._send(200, json.dumps({"ok": True}))
             if p == "/api/clone_voice":
-                # 百炼声音复刻：URL 或 base64 参考音频 → 生成专属 voice_id
+                # 两种生成方式：① 声音复刻（参考音频 URL 或录音/文件 base64）
+                #                 ② 声音设计（只填提示词描述想要的音色）
                 url = str(body.get("url", "")).strip()
                 b64 = body.get("audio_base64")
+                prompt = str(body.get("prompt", "")).strip()
+                preview = str(body.get("preview_text", "")).strip()
                 prefix = str(body.get("prefix", "airadio")).strip()
-                if not prefix.isalnum() or len(prefix) >= 10 or not prefix.islower():
+                if not re.fullmatch(r"[a-z0-9]{1,9}", prefix):
                     return self._send(422, json.dumps(
-                        {"error": "音色名(prefix)只能是 <10 位小写字母数字"}))
+                        {"error": "音色名要用英文小写字母或数字，且少于 10 位（例：xiangge01）"}))
                 if not self.orch.has_api_key():
                     return self._send(422, json.dumps({"error": "先填写百炼 API Key"}))
-                import base64 as _b64
-                import shutil
-                import subprocess
-                import tempfile
-                api_key = self.orch.api_key or os.environ.get("DASHSCOPE_API_KEY")
-                audio_data_uri = ""
-                if b64:
-                    raw = _b64.b64decode(b64.split(",", 1)[-1])
-                    if len(raw) > 10 * 1024 * 1024:
-                        return self._send(422, json.dumps({"error": "音频超过 10MB"}))
-                    suffix = str(body.get("format") or "webm")
-                    with tempfile.TemporaryDirectory() as td:
-                        src = os.path.join(td, f"in.{suffix}")
-                        dst = os.path.join(td, "out.wav")
-                        with open(src, "wb") as f:
-                            f.write(raw)
-                        ffmpeg = shutil.which("ffmpeg")
-                        if ffmpeg:
-                            # 统一转成 24kHz 单声道 16bit WAV（百炼要求）
-                            r = subprocess.run(
-                                [ffmpeg, "-y", "-i", src, "-ar", "24000", "-ac", "1",
-                                 "-sample_fmt", "s16", dst],
-                                capture_output=True, text=True, timeout=60)
-                            if r.returncode == 0:
-                                audio_data_uri = "data:audio/wav;base64," + _b64.b64encode(
-                                    open(dst, "rb").read()).decode("ascii")
-                            else:
-                                audio_data_uri = "data:audio/webm;base64," + _b64.b64encode(raw).decode("ascii")
-                        else:
-                            audio_data_uri = f"data:audio/{suffix};base64," + _b64.b64encode(raw).decode("ascii")
-                elif url.startswith("http"):
-                    audio_data_uri = ""  # 走下方 URL 分支
-                else:
-                    return self._send(422, json.dumps({"error": "需要录音(audio_base64)或参考音频 URL"}))
+                target_model = str(body.get("target_model") or self.orch.model).strip()
                 import requests
-                if audio_data_uri:
-                    resp = requests.post(
-                        "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
-                        timeout=90,
-                        headers={"Authorization": f"Bearer {api_key}",
-                               "Content-Type": "application/json"},
-                        json={"model": "voice-enrollment",
-                              "input": {"action": "create_voice",
-                                        "target_model": self.orch.model,
-                                        "prefix": prefix, "audio": audio_data_uri}})
-                    if resp.status_code != 200:
-                        return self._send(502, json.dumps(
-                            {"error": f"百炼: {resp.text[:200]}"}, ensure_ascii=False))
-                    voice_id = resp.json().get("output", {}).get("voice_id", "")
+                api_key = self.orch.api_key or os.environ.get("DASHSCOPE_API_KEY")
+                inp: dict = {"action": "create_voice", "target_model": target_model, "prefix": prefix}
+                if prompt and not b64 and not url:
+                    # 声音设计：voice_prompt + preview_text 必须成对给（实测）
+                    if len(prompt) < 5:
+                        return self._send(422, json.dumps({"error": "音色描述太短，写清性别/年龄/语气/用途"}))
+                    inp["voice_prompt"] = prompt[:500]
+                    inp["preview_text"] = (preview or "欢迎来到直播间，我们开始吧。")[:60]
+                    if len(inp["preview_text"]) < 5:
+                        inp["preview_text"] = "欢迎来到直播间，我们开始吧。"
+                    inp["preferred_name"] = prefix
                 else:
-                    from dashscope.audio.tts_v2 import VoiceEnrollmentService
-                    svc = VoiceEnrollmentService(api_key=api_key, model=self.orch.model)
-                    voice_id = svc.create_voice(target_model=self.orch.model,
-                                                prefix=prefix, url=url)
-                self.orch.log_append(f"voice: 复刻生成 {voice_id}")
-                return self._send(200, json.dumps({"ok": True, "voice_id": voice_id}))
+                    if b64:
+                        audio_data_uri = _prep_reference_audio(b64, body.get("format"))
+                        if isinstance(audio_data_uri, tuple):   # (code, message) 错误
+                            return self._send(*audio_data_uri)
+                        inp["audio"] = audio_data_uri
+                    elif url.startswith("http"):
+                        inp["url"] = url
+                    else:
+                        return self._send(422, json.dumps(
+                            {"error": "要么录音/选文件（复刻），要么填音色描述（提示词生成）"}))
+                resp = requests.post(
+                    "https://dashscope.aliyuncs.com/api/v1/services/audio/tts/customization",
+                    timeout=120,
+                    headers={"Authorization": f"Bearer {api_key}",
+                             "Content-Type": "application/json"},
+                    json={"model": "voice-enrollment", "input": inp})
+                if resp.status_code != 200:
+                    return self._send(502, json.dumps(
+                        {"error": _enroll_error_hint(resp.text[:300])}, ensure_ascii=False))
+                voice_id = resp.json().get("output", {}).get("voice_id", "")
+                how = "提示词生成" if "voice_prompt" in inp else "录音复刻"
+                self.orch.log_append(f"voice: {how}生成 {voice_id}（{target_model}）")
+                return self._send(200, json.dumps({
+                    "ok": True, "voice_id": voice_id, "target_model": target_model,
+                    "mode": "design" if "voice_prompt" in inp else "clone"}, ensure_ascii=False))
             if p == "/api/preview_voice":
                 # 用指定音色（含新复刻的）合成一段试听
                 text = (body.get("text") or "试听：这是新的音色。").strip()[:200]
@@ -337,9 +467,16 @@ def main():
     ap.add_argument("--script", default="scripts/demo_script.txt")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--sink", default="file", choices=["file", "ffplay", "dry"])
-    ap.add_argument("--voice", default="longxiaochun_v2")
+    ap.add_argument("--model", default="cosyvoice-v2",
+                    help="cosyvoice-v3.5-flash / v3.5-plus（这两个必须配自建音色）/ v3-flash / v2")
+    ap.add_argument("--voice", default="")
     ap.add_argument("--window", default="60,150")
     ap.add_argument("--min-gap", type=float, default=45.0)
+    ap.add_argument("--merge", type=int, default=None)
+    ap.add_argument("--gap", type=int, default=None)
+    ap.add_argument("--no-trim-silence", action="store_true")
+    ap.add_argument("--prefetch", type=int, default=None)
+    ap.add_argument("--prefetch-all", action="store_true")
     args = ap.parse_args()
 
     w0, w1 = (float(x) for x in args.window.split(","))
@@ -349,12 +486,37 @@ def main():
     for t, n in gen.STARTER_TOPICS:
         if t not in have:
             LIB.add_topic(t, n)
+
+    runtime = LIB.get_runtime()        # 上次在页面上选的模型/音色：重启后自动接上
+    model = runtime.get("model") or args.model
+    voice = runtime.get("voice") or args.voice or models.default_voice_for(model)
+    if not voice:
+        raise SystemExit(f"{model} 没有系统音色：--voice 要给一个已生成的音色 id "
+                         f"（页面上用提示词或录音生成，或 /api/clone_voice）")
     orch = Orchestrator(
         args.room, load_dotenv_script(ROOT / args.script),
         schedule=ScheduleConfig(min_gap_s=args.min_gap, window_s=(w0, w1)),
-        voice=args.voice, out_dir=str(ROOT / "out" / "chunks"), sink=args.sink)
+        model=model, voice=voice, out_dir=str(ROOT / "out" / "chunks"), sink=args.sink)
+    saved = LIB.get_phrases()      # 页面上保存过的话术/昵称规则/报时设置：重启后继续用
+    if saved:
+        orch.update_params(
+            templates=saved.get("templates"),
+            nick_han_only=saved.get("nick_han_only"),
+            nick_max_chars=saved.get("nick_max_chars"),
+            announce_time=saved.get("announce_time"),
+            announce_interval_s=saved.get("announce_interval_s"),
+            time_templates=saved.get("time_templates"),
+            fallback_templates=saved.get("fallback_templates"))
+    orch.update_params(merge_sentences=args.merge, sentence_gap_ms=args.gap,
+                       prefetch_ahead=args.prefetch,
+                       trim_silence=(False if args.no_trim_silence else None))
     Handler.orch = orch
     threading.Thread(target=orch.run, daemon=True).start()
+    if args.prefetch_all:
+        try:
+            print(f"预生成整稿：排队 {orch.prefetch_script(None)} 句")
+        except ValueError as e:
+            print("预生成整稿跳过：", e)
 
     srv = ThreadingHTTPServer(("0.0.0.0", args.port), Handler)
     print(f"控制台: http://0.0.0.0:{args.port}  (手机同一WiFi直接打开)")

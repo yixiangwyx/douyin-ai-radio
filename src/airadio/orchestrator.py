@@ -11,7 +11,8 @@ from .live import LiveCollector
 from .player import ChunkWriter, FFplaySink
 from .mp3len import duration_ms
 from .silence import trim_edges
-from .timeline import Scheduler, ScheduleConfig, parse_script
+from .timeline import INTERACTION_KINDS, Scheduler, ScheduleConfig, parse_script
+from .models import is_usable_voice, model_info, model_names
 from .tts import TTSStreamer
 
 
@@ -200,8 +201,60 @@ class Orchestrator:
                       prefetch_ahead: int | None = None,
                       sentence_gap_ms: int | None = None,
                       merge_sentences: int | None = None,
-                      trim_silence: bool | None = None) -> None:
+                      trim_silence: bool | None = None,
+                      templates: dict | None = None,
+                      nick_han_only: bool | None = None,
+                      nick_max_chars: int | None = None,
+                      announce_time: bool | None = None,
+                      announce_interval_s: tuple | list | None = None,
+                      time_templates: list | None = None,
+                      fallback_templates: list | None = None) -> None:
+        """改模型/音色前先校验：v3.5 系列没有系统音色（填 longanyang 会被百炼拒 418），
+        而且音色绑定创建时的 target_model，跨模型用不了。校验不过就抛 ValueError。"""
         cfg = self.scheduler.cfg
+        new_model = (model or self.model).strip()
+        new_voice = (voice or self.voice).strip()
+        if model or voice:
+            info = model_info(new_model)
+            if info is None:
+                raise ValueError(f"未知模型 {new_model}（可选：{', '.join(model_names())}）")
+            if not is_usable_voice(new_model, new_voice):
+                raise ValueError(
+                    f"音色 {new_voice} 不能用在 {new_model} 上：音色是绑定生成时的模型的；"
+                    f"{'该模型没有系统音色，请先用提示词设计或录音复刻生成音色再切过去' if info['needs_custom_voice'] else '请选该模型的系统音色'}")
+        if templates:
+            saved = {}
+            for kind, lines in templates.items():
+                if kind not in cfg.templates:
+                    continue
+                clean = [str(x).strip() for x in (lines or []) if str(x).strip()]
+                if clean:
+                    saved[kind] = clean
+            if saved:
+                cfg.templates.update(saved)
+                self.log_append("话术: 已更新 " + "、".join(
+                    f"{k}({len(v)}条)" for k, v in saved.items()))
+        if nick_han_only is not None:
+            cfg.nick_han_only = bool(nick_han_only)
+            self.log_append(f"params: 昵称只读汉字={cfg.nick_han_only}")
+        if nick_max_chars is not None:
+            cfg.nick_max_chars = max(1, min(20, int(nick_max_chars)))
+            self.log_append(f"params: 昵称最多读 {cfg.nick_max_chars} 个字")
+        if announce_time is not None:
+            cfg.announce_time = bool(announce_time)
+            self.log_append(f"params: 随机报时={'开' if cfg.announce_time else '关'}")
+        if announce_interval_s is not None:
+            lo, hi = float(announce_interval_s[0]), float(announce_interval_s[1])
+            cfg.announce_interval_s = (max(30.0, lo), max(lo + 30.0, hi))
+        if time_templates:
+            clean = [str(x).strip() for x in time_templates if str(x).strip()]
+            if clean:
+                cfg.time_templates = clean
+                self.log_append(f"报时: 已更新话术 {len(clean)} 条")
+        if fallback_templates is not None:
+            clean = [str(x).strip() for x in fallback_templates if str(x).strip()]
+            cfg.fallback_templates = clean or cfg.fallback_templates
+            self.log_append(f"params: 无互动兜底话术 {len(cfg.fallback_templates)} 条")
         if sentence_gap_ms is not None:
             self.sentence_gap_ms = max(0, min(5000, int(sentence_gap_ms)))
             self.log_append(f"params: 句间停顿={self.sentence_gap_ms}ms")
@@ -221,7 +274,7 @@ class Orchestrator:
             cfg.window_s = (max(0.0, w0), max(max(0.0, w0) + 1.0, w1))
         if per_kind_windows:
             for kind, w in per_kind_windows.items():
-                if kind not in ("member", "follow", "chat", "like", "gift"):
+                if kind not in INTERACTION_KINDS:
                     continue
                 if w is None:
                     cfg.per_kind_windows.pop(kind, None)
@@ -314,6 +367,18 @@ class Orchestrator:
                 "min_gap": cfg.min_gap_s, "window": list(cfg.window_s),
                 "per_kind_windows": {k: list(v) for k, v in cfg.per_kind_windows.items()},
             },
+            # 话术/昵称/报时配置（前端可直接编辑并保存）
+            "phrases": {
+                "templates": {k: list(v) for k, v in cfg.templates.items()},
+                "kinds": list(INTERACTION_KINDS),
+                "nick_han_only": cfg.nick_han_only,
+                "nick_max_chars": cfg.nick_max_chars,
+                "announce_time": cfg.announce_time,
+                "announce_interval_s": list(cfg.announce_interval_s),
+                "time_templates": list(cfg.time_templates),
+                "fallback_templates": list(cfg.fallback_templates),
+            },
+            "announced": self.scheduler.announced_count,
             "tts_calls": self.tts_calls,
             "cache_hits": self.cache_hits,
             "cache_size": len(self._tts_cache),

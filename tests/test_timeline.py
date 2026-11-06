@@ -56,7 +56,8 @@ def test_scheduler_respects_gap_and_window():
         if out:
             planned = now
             break
-    assert out and "测试用户A" in out and planned >= 1060.0  # 计划时刻落在窗口 [60,150] 内
+    # 昵称默认只读汉字：字母 A 被去掉
+    assert out and "测试用户" in out and "A" not in out and planned >= 1060.0  # 计划时刻落在窗口 [60,150] 内
     # 紧接着再来边界：最小间隔不足 → 不插
     assert sched.on_boundary(planned + 5, protected_after=False) is None
     # 45s 后可再插
@@ -66,7 +67,7 @@ def test_scheduler_respects_gap_and_window():
         out2 = sched.on_boundary(now, protected_after=False)
         if out2:
             break
-    assert out2 and "粉丝B" in out2
+    assert out2 and "粉丝" in out2 and "B" not in out2   # 只读汉字：字母被去掉
 
 
 def test_scheduler_skips_protected_boundary():
@@ -102,7 +103,7 @@ def test_gift_priority_templates():
     cfg = ScheduleConfig(min_gap_s=10, window_s=(0, 10), urgent_min_gap_s=2)
     sched = Scheduler(cfg, q, rng=random.Random(3))
     out = sched.on_boundary(5.0, protected_after=False)  # 高价值礼物计划时刻≈1s，可插队
-    assert out and "大哥" in out and "火箭" in out and "×3" in out
+    assert out and "大哥" in out and "火箭" in out and "3个" in out
 
 
 def test_render_mark_placeholders():

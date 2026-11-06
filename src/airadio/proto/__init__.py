@@ -12,8 +12,11 @@ SocialMessage = _pb.SocialMessage
 MemberMessage = _pb.MemberMessage
 LikeMessage = _pb.LikeMessage
 GiftMessage = _pb.GiftMessage
+FansclubMessage = _pb.FansclubMessage
+UpdateFanTicketMessage = _pb.UpdateFanTicketMessage
 
 __all__ = [
     "PushFrame", "Response", "Message", "ChatMessage", "EmojiChatMessage",
     "SocialMessage", "MemberMessage", "LikeMessage", "GiftMessage",
+    "FansclubMessage", "UpdateFanTicketMessage",
 ]

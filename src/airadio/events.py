@@ -34,6 +34,8 @@ class InteractionEvent:
             return f"g:{self.nick}:{self.gift}:{int(self.t // 5)}"
         if self.kind == "like":
             return f"l:{int(self.t // 30)}"
+        if self.kind == "badge":
+            return f"b:{self.nick}:{self.content}:{int(self.t // 120)}"
         if self.kind in ("follow", "member"):
             return f"{self.kind[0]}:{self.nick}:{int(self.t // 120)}"
         return f"s:{int(self.t // 60)}"
