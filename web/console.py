@@ -483,7 +483,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--room", required=True)
-    ap.add_argument("--script", default="scripts/demo_script.txt")
+    ap.add_argument("--script", default="scripts/default_script.txt")
     ap.add_argument("--port", type=int, default=8000)
     ap.add_argument("--sink", default="file", choices=["file", "ffplay", "dry"])
     ap.add_argument("--model", default="cosyvoice-v2",
@@ -501,10 +501,7 @@ def main():
     w0, w1 = (float(x) for x in args.window.split(","))
     global LIB
     LIB = LIB or Library(ROOT / "data" / "library.json")
-    have = {t["title"] for t in LIB.data["topics"]}     # 只补新增的起点话题，不重复
-    for t, n in gen.STARTER_TOPICS:
-        if t not in have:
-            LIB.add_topic(t, n)
+    # 不再自动内置话题库：稿子库只保留用户自己的稿（默认不生成话题稿、不自动轮换）
 
     runtime = LIB.get_runtime()        # 上次在页面上选的模型/音色：重启后自动接上
     model = runtime.get("model") or args.model
@@ -516,6 +513,13 @@ def main():
         args.room, load_dotenv_script(ROOT / args.script),
         schedule=ScheduleConfig(min_gap_s=args.min_gap, window_s=(w0, w1)),
         model=model, voice=voice, out_dir=str(ROOT / "out" / "chunks"), sink=args.sink)
+    # 默认稿在页面上显示名字：内容能匹配稿子库就用库里的标题，否则用文件名
+    default_text = orch.get_script().strip()
+    match = next((s for s in (LIB.data.get("scripts") or [])
+                  if (s.get("text") or "").strip() == default_text), None)
+    orch.script_title = match["title"] if match else pathlib.Path(args.script).stem
+
+
     saved = LIB.get_phrases()      # 页面上保存过的话术/昵称规则/报时设置：重启后继续用
     if saved:
         orch.update_params(
