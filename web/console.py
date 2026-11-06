@@ -30,8 +30,11 @@ if _envp.exists():
 
 from airadio.orchestrator import Orchestrator  # noqa: E402
 from airadio.timeline import ScheduleConfig  # noqa: E402
+from airadio.library import Library  # noqa: E402
+from airadio import generate as gen  # noqa: E402
 
 STATE: dict = {}
+LIB: Library = None  # type: ignore
 
 
 def load_dotenv_script(path: str) -> str:
@@ -68,6 +71,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(200, json.dumps(self.orch.snapshot(), ensure_ascii=False).encode())
         if p == "/api/script":
             return self._send(200, json.dumps({"text": self.orch.get_script()}, ensure_ascii=False).encode())
+        if p == "/api/library":
+            return self._send(200, json.dumps(LIB.snapshot(), ensure_ascii=False).encode())
+        if p == "/api/starter_topics":
+            return self._send(200, json.dumps({"topics": [{"title": t, "note": n} for t, n in gen.STARTER_TOPICS]},
+                                              ensure_ascii=False).encode())
         if p == "/api/voices":
             # 列出该账号已复刻的音色（cosyvoice-v2）
             if not self.orch.has_api_key():
@@ -109,6 +117,58 @@ class Handler(BaseHTTPRequestHandler):
                 n = self.orch.update_script(body.get("text", ""), apply_now=bool(body.get("apply_now")))
                 return self._send(200, json.dumps({"ok": True, "sentences": n,
                                                    "applied": bool(body.get("apply_now"))}))
+            if p == "/api/library/topic":
+                t = LIB.add_topic(body.get("title", ""), body.get("note", ""))
+                return self._send(200, json.dumps({"ok": True, "topic": t}, ensure_ascii=False))
+            if p == "/api/library/topic_delete":
+                return self._send(200, json.dumps({"ok": LIB.remove_topic(body.get("id", ""))}))
+            if p == "/api/library/script_delete":
+                return self._send(200, json.dumps({"ok": LIB.remove_script(body.get("id", ""))}))
+            if p == "/api/library/save":
+                item = LIB.add_script(body.get("title", ""), body.get("text", ""),
+                                      body.get("source", "手动保存"))
+                return self._send(200, json.dumps({"ok": True, "id": item["id"],
+                                                   "sentences": item["sentences"]}, ensure_ascii=False))
+            if p == "/api/library/use":
+                item = LIB.get_script(body.get("id", ""))
+                if not item:
+                    return self._send(404, json.dumps({"error": "稿子不存在"}))
+                n = self.orch.update_script(item["text"], apply_now=bool(body.get("apply_now", True)))
+                return self._send(200, json.dumps({"ok": True, "title": item["title"],
+                                                   "sentences": n, "applied": bool(body.get("apply_now", True))},
+                                                  ensure_ascii=False))
+            if p == "/api/generate":
+                topic = (body.get("topic") or "").strip()
+                if not topic:
+                    return self._send(400, json.dumps({"error": "先选或填一个话题"}))
+                note = body.get("note", "") or ""
+                n_sent = int(body.get("sentences") or 10)
+                mode = body.get("mode", "auto")   # auto=先AI后本地 / local=只用本地模板
+                used, model = "", ""
+                try:
+                    if mode != "local":
+                        text, model = gen.generate_script(topic, note, n_sent,
+                                                          api_key=self.orch.api_key or os.environ.get("DASHSCOPE_API_KEY"))
+                        used = "ai"
+                    else:
+                        raise RuntimeError("按要求只用本地生成")
+                except Exception as e:
+                    text = gen.draft_from_topic(topic, note, n_sent)
+                    used = "local"
+                    err = str(e)[:160]
+                else:
+                    err = ""
+                for t in LIB.data["topics"]:
+                    if t["title"] == topic:
+                        t["used"] = int(t.get("used", 0)) + 1
+                if not any(t["title"] == topic for t in LIB.data["topics"]):
+                    LIB.add_topic(topic, note)
+                item = LIB.add_script(item_title := (body.get("title") or topic), text,
+                                      source=("百炼 " + model) if used == "ai" else "本地模板")
+                return self._send(200, json.dumps({"ok": True, "id": item["id"], "text": text,
+                                                   "used": used, "model": model, "fallback_error": err,
+                                                   "title": item_title, "sentences": item["sentences"]},
+                                                  ensure_ascii=False))
             if p == "/api/params":
                 window = body.get("window")
                 pkw = body.get("per_kind_windows") or {}
@@ -123,7 +183,10 @@ class Handler(BaseHTTPRequestHandler):
                     rate=body.get("rate"), min_gap=body.get("min_gap"),
                     window=(window[0], window[1]) if isinstance(window, list) and len(window) == 2 else None,
                     per_kind_windows=clean or None,
-                    prefetch_ahead=body.get("prefetch_ahead"))
+                    prefetch_ahead=body.get("prefetch_ahead"),
+                    sentence_gap_ms=body.get("sentence_gap_ms"),
+                    merge_sentences=body.get("merge_sentences"),
+                    trim_silence=body.get("trim_silence"))
                 return self._send(200, json.dumps({"ok": True}))
             if p == "/api/prefetch":
                 n = body.get("limit")
@@ -265,6 +328,11 @@ def main():
     args = ap.parse_args()
 
     w0, w1 = (float(x) for x in args.window.split(","))
+    global LIB
+    LIB = LIB or Library(ROOT / "data" / "library.json")
+    if not LIB.data["topics"]:
+        for t, n in gen.STARTER_TOPICS:
+            LIB.add_topic(t, n)
     orch = Orchestrator(
         args.room, load_dotenv_script(ROOT / args.script),
         schedule=ScheduleConfig(min_gap_s=args.min_gap, window_s=(w0, w1)),

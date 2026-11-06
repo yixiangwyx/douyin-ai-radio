@@ -9,6 +9,8 @@ import time
 from .events import InteractionQueue
 from .live import LiveCollector
 from .player import ChunkWriter, FFplaySink
+from .mp3len import duration_ms
+from .silence import trim_edges
 from .timeline import Scheduler, ScheduleConfig, parse_script
 from .tts import TTSStreamer
 
@@ -54,6 +56,13 @@ class Orchestrator:
         self.cache_hits = 0     # 缓存命中（复用音频）次数
         self._tts_lock = threading.Lock()
         self.prefetch_ahead = int(os.environ.get("AIRADIO_PREFETCH", "3"))  # 提前预生成的句数
+        # 句间停顿（毫秒）：0 = 一句接一句不换气。节拍一律用真实音频时长，不按字数估算。
+        self.sentence_gap_ms = int(os.environ.get("AIRADIO_SENTENCE_GAP", "150"))
+        # 连续正文句合并成一次 TTS 任务（组内不再有静音/停顿，语气连贯）；1=不合并
+        self.merge_sentences = max(1, min(6, int(os.environ.get("AIRADIO_MERGE", "2"))))
+        # 裁掉每块首尾静音（需要 ffmpeg）
+        self.trim_silence = os.environ.get("AIRADIO_TRIM", "1") != "0"
+        self.trim_removed_ms = 0
         self._prefetch_thread: threading.Thread | None = None
         self.prefetch_pending = 0
         self.prefetch_done = 0
@@ -114,8 +123,20 @@ class Orchestrator:
                       rate: float | None = None, min_gap: float | None = None,
                       window: tuple | list | None = None,
                       per_kind_windows: dict | None = None,
-                      prefetch_ahead: int | None = None) -> None:
+                      prefetch_ahead: int | None = None,
+                      sentence_gap_ms: int | None = None,
+                      merge_sentences: int | None = None,
+                      trim_silence: bool | None = None) -> None:
         cfg = self.scheduler.cfg
+        if sentence_gap_ms is not None:
+            self.sentence_gap_ms = max(0, min(5000, int(sentence_gap_ms)))
+            self.log_append(f"params: 句间停顿={self.sentence_gap_ms}ms")
+        if merge_sentences is not None:
+            self.merge_sentences = max(1, min(6, int(merge_sentences)))
+            self.log_append(f"params: 每次合并句数={self.merge_sentences}")
+        if trim_silence is not None:
+            self.trim_silence = bool(trim_silence)
+            self.log_append(f"params: 裁首尾静音={self.trim_silence}")
         if prefetch_ahead is not None:
             self.prefetch_ahead = max(0, min(20, int(prefetch_ahead)))
             self.log_append(f"params: 自动预生成句数={self.prefetch_ahead}")
@@ -186,9 +207,19 @@ class Orchestrator:
         speech_total = sum(1 for s in self.segments if s.kind == "speech")
         prefix = f"{self.model}|{self.voice}|{self.speech_rate}|"
         with self._tts_lock:
-            cached_now = sum(
-                1 for idx, s in enumerate(self.segments)
-                if s.kind == "speech" and (prefix + self._seg_cache_key(idx, s)) in self._tts_cache)
+            ready_sents = 0
+            ready_groups = 0
+            j = 0
+            while j < len(self.segments):
+                s = self.segments[j]
+                if s.kind != "speech":
+                    j += 1
+                    continue
+                idxs = self._group_at(j)
+                j = idxs[-1] + 1
+                if (prefix + self._group_cache_key(idxs)) in self._tts_cache:
+                    ready_sents += len(idxs)
+                    ready_groups += 1
         return {
             "status": self.status,
             "room": {
@@ -216,8 +247,13 @@ class Orchestrator:
             "prefetch_pending": self.prefetch_pending,
             "prefetch_done": self.prefetch_done,
             "prefetch_running": bool(self._prefetch_thread and self._prefetch_thread.is_alive()),
-            "cache_ready": cached_now,        # 本稿已预生成/已缓存的正文句数
+            "cache_ready": ready_sents,       # 本稿已预生成/已缓存的正文句数
             "cache_total": speech_total,      # 本稿正文句总数
+            "groups_ready": ready_groups,
+            "merge_sentences": self.merge_sentences,
+            "sentence_gap_ms": self.sentence_gap_ms,
+            "trim_silence": self.trim_silence,
+            "trim_removed_ms": self.trim_removed_ms,
             "seg_index": self._seg_i,
             "seg_count": len(self.segments),
             "tts_error": (self.tts.last_error if self.tts else
@@ -280,7 +316,13 @@ class Orchestrator:
             return b""
         with self._tts_lock:
             self.tts_calls += 1
-            return self.tts.synth(texts)
+            audio = self.tts.synth(texts)
+        if audio and self.trim_silence:
+            # 百炼每块自带首尾静音（实测尾部 0.25–0.65s），逐句连播就成了"每句都停顿"
+            audio, removed = trim_edges(audio)
+            if removed:
+                self.trim_removed_ms += removed
+        return audio
 
     def _synth_cached(self, key: str, texts: list[str]) -> bytes:
         """文本没变就用缓存音频（循环重播不再请求百炼）；只有新内容才真实合成。"""
@@ -305,16 +347,45 @@ class Orchestrator:
     def _seg_cache_key(self, idx: int, seg) -> str:
         return f"seg:{idx}:{seg.text}"
 
+    def _group_at(self, i: int) -> list[int]:
+        """把 i 起连续最多 merge_sentences 个正文句合成一组（同一次 TTS 任务 → 语气连贯、无中间静音）。
+
+        只在纯正文句之间合并；遇到停顿标记 / 固定话术(mark) 就断组。
+        代价：组内不再有插播点（组尾仍可插播）。merge_sentences<2 时不合并。
+        """
+        n = self.merge_sentences
+        if n < 2 or i >= len(self.segments):
+            return [i] if i < len(self.segments) else []
+        idxs = [i]
+        for j in range(i + 1, min(i + n, len(self.segments))):
+            if self.segments[j].kind != "speech":
+                break
+            idxs.append(j)
+        return idxs
+
+    def _group_texts(self, idxs: list[int]) -> list[str]:
+        return [self.segments[j].text for j in idxs]
+
+    def _group_cache_key(self, idxs: list[int]) -> str:
+        if len(idxs) == 1:
+            return self._seg_cache_key(idxs[0], self.segments[idxs[0]])
+        return "grp:" + ",".join(str(j) for j in idxs) + ":" + "|".join(self._group_texts(idxs))
+
     def _prefetch_todo(self, start: int, limit: int | None):
+        """按'将要播放的组'排队（与 _play_pass 的分组一致，预生成的就是播放要用的那块音频）。"""
         todo = []
         end = len(self.segments) if limit is None else min(start + limit, len(self.segments))
-        for j in range(start, end):
+        j = start
+        while j < end:
             s = self.segments[j]
             if s.kind != "speech":
-                continue  # 固定话术/mark 依赖实时互动，不预生成
-            key = f"{self.model}|{self.voice}|{self.speech_rate}|{self._seg_cache_key(j, s)}"
+                j += 1
+                continue
+            idxs = self._group_at(j)
+            j = idxs[-1] + 1
+            key = f"{self.model}|{self.voice}|{self.speech_rate}|{self._group_cache_key(idxs)}"
             if key not in self._tts_cache:
-                todo.append((j, key, s.text))
+                todo.append((idxs[0], key, self._group_texts(idxs)))
         return todo
 
     def prefetch_script(self, limit: int | None = 0) -> int:
@@ -356,12 +427,12 @@ class Orchestrator:
 
     def _prefetch_worker(self, todo) -> None:
         try:
-            for idx, key, text in todo:
+            for idx, key, texts in todo:
                 if self._stop.is_set() or self._restart:
                     return
-                audio = self._synth([text])
+                audio = self._synth(texts)
                 if not audio:
-                    self.log_append(f"prefetch: 第{idx}句合成失败 "
+                    self.log_append(f"prefetch: 第{idx}组合成失败 "
                                     f"{self.tts.last_error if self.tts else ''}")
                     return
                 with self._tts_lock:
@@ -381,27 +452,39 @@ class Orchestrator:
                 self._seg_i = i
                 return  # 回到 run() 处理换稿/暂停；resume 时从 _seg_i 继续
             seg = self.segments[i]
-            i += 1
-            self._seg_i = i
             if seg.kind == "pause":
+                # 定点停顿：告诉播放端下一块前先停这么多，然后本地也等
+                self.chunk_writer.add_gap(seg.duration_ms)
+                i += 1
+                self._seg_i = i
                 time.sleep(seg.duration_ms / 1000.0)
                 continue
-            kind = seg.kind
             if seg.kind == "speech":
-                # 稿子未变的句子：首轮合成一次，后续循环直接复用音频
-                texts = [seg.text]
-                cache_key = self._seg_cache_key(i - 1, seg)
+                # 连续正文句按组一次合成（语气连贯、组内无静音）；未变的组只合成一次
+                idxs = self._group_at(i)
+                texts = self._group_texts(idxs)
+                cache_key = self._group_cache_key(idxs)
+                kind = "speech"
             else:  # mark：固定话术模板，占位符没被互动数据填时也能缓存
+                idxs = [i]
                 latest = self.queue.items[-1] if self.queue.items else None
                 text = self.scheduler.render_mark(seg.text, latest)
                 texts = [text]
                 cache_key = f"mark:{text}"
+                kind = seg.kind
+            i = idxs[-1] + 1
+            self._seg_i = i
             audio = self._synth_cached(cache_key, texts)
-            self.chunk_writer.write(kind, " ".join(texts), audio or b"")
-            self.log_append(f"play[{kind}]: {' '.join(texts)}")
-            est = self._estimate_elapsed_s(texts)
-            self._prefetch_ahead(i)  # 当前句播出的这段时间，后台先合成后面几句
-            time.sleep(min(8.0, est))  # 按播报时长节拍推进
+            # 第一块不留空；后续每块前留句间停顿（与本地 sleep 一致，浏览器据此接播）
+            gap_ms = max(0, int(self.sentence_gap_ms)) if self.chunk_writer.manifest else 0
+            self.chunk_writer.write(kind, " ".join(texts), audio or b"", gap_before_ms=gap_ms)
+            self.log_append(f"play[{kind}]{'' if len(idxs) < 2 else f'×{len(idxs)}'}: {' '.join(texts)}")
+            # 节拍 = 真实音频时长（解析 mp3 帧，与 ffprobe 校准到 20ms），不再按字数估算。
+            # 音频还没就绪（预生成没跟上）时才退回估算，避免播得比生成快。
+            dur_ms = duration_ms(audio) if audio else 0.0
+            dur_s = dur_ms / 1000.0 if dur_ms > 0 else self._estimate_elapsed_s(texts)
+            self._prefetch_ahead(i)  # 当前组播出的这段时间，后台先合成后面几组
+            time.sleep(max(0.0, dur_s) + gap_ms / 1000.0)
             # 句边界：能不能插播？（看下一个边界是否受保护）
             nxt_protected = self._next_boundary_protected(i)
             insert_text = self.scheduler.on_boundary(time.time(), nxt_protected)

@@ -29,6 +29,16 @@
   input { min-height:40px; }
   label { font-size:12px; color:var(--dim); display:block; margin:8px 0 3px; }
   .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+  .topiclist { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
+  .topic-chip { padding:6px 10px; border-radius:14px; background:var(--card2); border:1px solid #2b3641;
+                font-size:13px; cursor:pointer; }
+  .topic-chip.sel { border-color:var(--accent); background:#123042; }
+  .topic-chip .x { color:var(--dim); margin-left:6px; }
+  .scriptlist { margin-top:6px; }
+  .scriptlist .srow { display:flex; gap:8px; align-items:center; padding:8px 0; border-top:1px solid #2b3641; }
+  .scriptlist .stitle { flex:1; font-size:14px; }
+  .scriptlist .smeta { color:var(--dim); font-size:11px; }
+  .scriptlist button { min-height:34px; padding:0 10px; font-size:13px; }
   .feed div { padding:7px 9px; margin:5px 0; border-radius:8px; background:var(--card2);
               font-size:14px; line-height:1.45; word-break:break-all; }
   .feed .e-chat{border-left:3px solid var(--accent)} .feed .e-gift{border-left:3px solid var(--int)}
@@ -88,6 +98,29 @@
     <button class="warn" id="btnSaveNow">保存并立即从头播</button>
   </div>
   <div class="hint">标记：<code>[[no interrupt]]…[[/no interrupt]]</code> 不许插断 · <code>[[pause:500]]</code> 停顿 · <code>[[待插:…]]</code> 必播话术 · <code>#</code> 段标题 · 一行不写句号=整句不可插断</div>
+  <div class="row" style="margin-top:8px">
+    <button class="ghost" id="btnSaveToLib">存进稿子库</button>
+    <div style="flex:1"><label>稿子标题（留空=用话题名）</label><input id="libTitle" placeholder="例：留人话术 第1版"></div>
+  </div>
+</div>
+
+<div class="card">
+  <b style="font-size:15px">话题库 → 生成新稿</b>
+  <label style="margin-top:6px">选一个话题（点一下即选中）</label>
+  <div id="topicList" class="topiclist"></div>
+  <div class="row" style="margin-top:6px">
+    <div style="flex:2"><label>或自己写话题</label><input id="topicInput" placeholder="例：新手第一场直播该讲什么"></div>
+    <div style="flex:1"><label>句数</label><input id="genSentences" type="number" min="3" max="40" value="12"></div>
+  </div>
+  <div class="row" style="margin-top:6px">
+    <button id="btnGenerate">生成新稿</button>
+    <button class="ghost" id="btnAddTopic">加入话题库</button>
+    <button class="ghost" id="btnRefreshLib">刷新库</button>
+  </div>
+  <div class="hint" id="genHint">生成只写文字，不直接播放；生成后自动填进上面的稿子框，你确认后再点「保存并立即从头播」。</div>
+
+  <b style="font-size:15px;display:block;margin-top:12px">稿子库</b>
+  <div id="scriptList" class="scriptlist"></div>
 </div>
 
 <div class="card">
@@ -130,10 +163,15 @@
     <b style="font-size:14px">预生成（提前合成，避免边播边等）</b>
     <div class="row" style="margin-top:6px">
       <div style="flex:1"><label>自动预生成后面 N 句（0=关闭）</label><input id="prefetchInput" type="number" min="0" max="20"></div>
+      <div style="flex:1"><label>每次合并生成句数（1=逐句，2–6=连贯）</label><input id="mergeInput" type="number" min="1" max="6"></div>
+      <div style="flex:1"><label>句间停顿（毫秒）</label><input id="gapInput" type="number" min="0" max="3000" step="50"></div>
+      <label style="flex:1;display:flex;align-items:center;gap:6px;min-height:40px"><input type="checkbox" id="trimChk" style="width:auto;min-height:auto">裁掉每块首尾静音</label>
+    </div>
+    <div class="row" style="margin-top:6px">
       <button class="ghost" id="btnPrefetchN">预生成 N 句</button>
       <button class="ghost" id="btnPrefetchAll">预生成整稿</button>
     </div>
-    <div class="hint" id="prefetchHint">提交新稿不会一次全部提交给百炼：默认边播边合成，并自动提前预生成 3 句；点「预生成整稿」才一次把整稿合成完（之后循环全程零请求）。</div>
+    <div class="hint" id="prefetchHint">「每次合并生成句数」>1 时，连续几句进同一次合成——组内没有静音、语气连贯（代价：组内不再有插播点）。「句间停顿」=0 就一句接一句不留空。提交新稿不会一次全部提交给百炼，点「预生成整稿」才一次合成完。</div>
   </div>
   <label style="margin-top:12px">每类互动的随机插播区间（秒，低,高）— 留空=跟随全局默认</label>
   <div class="grid">
@@ -160,6 +198,7 @@
 
 <script>
 let autoPlay = false, playedThrough = 0, audioQueue = [], busy = false;
+let audioCtx = null, activeSources = [], nextStartAt = 0, metaCache = null;
 const $ = id => document.getElementById(id);
 
 async function api(path, body) {
@@ -176,18 +215,22 @@ function toast(msg, isErr) {
   toastTimer = setTimeout(() => { t.className = 'toast' + (isErr ? ' err' : ''); }, 2600);
 }
 // 统一的按钮动作：防止重复点击 + 明确反馈（成功/失败都提示）
+// btnId 传 null 表示列表里的临时按钮（没有固定 id），用 label 作为去重键
 async function act(btnId, label, fn) {
-  const b = $(btnId);
-  if (!b || inflight.has(btnId)) { toast(label + '：正在处理中，请稍候', true); return; }
-  inflight.add(btnId); const old = b.textContent;
-  b.classList.add('busy'); b.textContent = '处理中…';
+  const key = btnId || ('anon:' + label);
+  if (inflight.has(key)) { toast(label + '：正在处理中，请稍候', true); return; }
+  inflight.add(key);
+  const b = btnId ? $(btnId) : null;
+  const old = b ? b.textContent : '';
+  if (b) { b.classList.add('busy'); b.textContent = '处理中…'; }
   try {
     const msg = await fn();
     if (msg) toast(msg);
   } catch (e) {
     toast(label + '失败：' + (e && e.message ? e.message : e), true);
   } finally {
-    inflight.delete(btnId); b.classList.remove('busy'); b.textContent = old;
+    inflight.delete(key);
+    if (b) { b.classList.remove('busy'); b.textContent = old; }
   }
 }
 async function postJSON(path, body) {
@@ -251,24 +294,52 @@ function render(s) {
 function esc(x){return (x||'').replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
 
 async function drainAudio(total) {
-  if (busy || playedThrough >= total) return;
+  // 用 Web Audio 排程接播：预取+解码与播放并行，下一段在上一段结束时已经就位。
+  // 段间接缝按服务端 manifest 的 gap_before_ms 对齐（0 = 首尾相接，不留空档）。
+  if (busy) return;
   busy = true;
   try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === 'suspended') await audioCtx.resume();
+    const meta = await metaUpTo(total);
     while (playedThrough < total) {
       const i = playedThrough;
-      const r = await fetch('/chunks/' + String(i).padStart(4,'0') + '.mp3');
       playedThrough++;
-      if (!r.ok) continue;
-      const blob = await r.blob();
-      await new Promise(res => { const a = new Audio(URL.createObjectURL(blob)); a.onended=res; a.onerror=res; a.play(); });
+      let buf = null;
+      try {
+        const r = await fetch('/chunks/' + String(i).padStart(4, '0') + '.mp3');
+        if (r.ok) buf = await audioCtx.decodeAudioData(await r.arrayBuffer());
+      } catch (e) { buf = null; }
+      if (!buf) continue;
+      const gap = ((meta[i] && meta[i].gap_before_ms) || 0) / 1000;
+      const at = Math.max(audioCtx.currentTime + 0.02, (nextStartAt || 0) + gap);
+      const src = audioCtx.createBufferSource();
+      src.buffer = buf; src.connect(audioCtx.destination);
+      src.start(at);
+      activeSources.push(src);
+      nextStartAt = at + buf.duration;
+      src.onended = () => { const k = activeSources.indexOf(src); if (k >= 0) activeSources.splice(k, 1); };
     }
   } finally { busy = false; }
+}
+async function metaUpTo(total) {
+  if (metaCache && metaCache.length >= total) return metaCache;
+  try {
+    const r = await fetch('/chunks/manifest.json?ts=' + Date.now());
+    if (r.ok) metaCache = await r.json();
+  } catch (e) { /* 没有 manifest 时按 0 停顿接播 */ }
+  return metaCache || [];
+}
+function stopAudioQueue() {
+  for (const s of activeSources) { try { s.stop(); } catch (e) {} }
+  activeSources = []; nextStartAt = 0;
 }
 
 $('playBtn').onclick = async () => {
   autoPlay = !autoPlay;
   $('playBtn').textContent = autoPlay ? '⏸ 停止自动播放' : '▶ 开始连续播放（外放）';
-  if (autoPlay) { const s = await (await api('/api/state')).json(); playedThrough = s.chunks; render(s); }
+  if (!autoPlay) stopAudioQueue();
+  if (autoPlay) { const s = await (await api('/api/state')).json(); playedThrough = s.chunks; nextStartAt = 0; render(s); }
 };
 $('btnPause').onclick = (e) => act('btnPause', '暂停/继续', async () => {
   const s = await (await api('/api/state')).json();
@@ -298,6 +369,75 @@ $('btnSaveNow').onclick = () => act('btnSaveNow', '保存并播放', async () =>
   const d = await postJSON('/api/script', {text: $('scriptBox').value, apply_now: true});
   getState(); return '已生效 ' + d.sentences + ' 句，从头开始播';
 });
+$('btnSaveToLib').onclick = () => act('btnSaveToLib', '存进稿子库', async () => {
+  const text = $('scriptBox').value.trim();
+  if (!text) throw new Error('稿子框是空的');
+  const d = await postJSON('/api/library/save', {title: $('libTitle').value.trim() || '未命名稿', text});
+  loadLibrary(); $('libTitle').value = '';
+  return '已存进稿子库：' + d.sentences + ' 句';
+});
+// ---- 话题库 / 稿子库 ----
+let libCache = {topics: [], scripts: []};
+async function loadLibrary() {
+  const d = await (await api('/api/library')).json();
+  libCache = d;
+  renderTopics(); renderScripts();
+}
+function renderTopics() {
+  $('topicList').innerHTML = (libCache.topics || []).map(t =>
+    `<span class="topic-chip" data-t="${esc(t.title)}" data-note="${esc(t.note||'')}">${esc(t.title)}${t.used?(' <b style="color:var(--accent)">'+t.used+'</b>'):''}<span class="x" data-del="${t.id}">✕</span></span>`
+  ).join('') || '<span style="color:var(--dim);font-size:13px">话题库为空</span>';
+  for (const el of $('topicList').querySelectorAll('.topic-chip')) {
+    el.onclick = (ev) => {
+      if (ev.target.dataset.del) {
+        return act(null, '删除话题', async () => { await postJSON('/api/library/topic_delete', {id: ev.target.dataset.del}); loadLibrary(); return '已删除话题'; });
+      }
+      for (const c of $('topicList').querySelectorAll('.topic-chip')) c.classList.remove('sel');
+      el.classList.add('sel');
+      $('topicInput').value = el.dataset.t;
+      $('genHint').textContent = '已选话题：' + el.dataset.t + (el.dataset.note ? '（要点：' + el.dataset.note + '）' : '');
+      window._genNote = el.dataset.note || '';
+    };
+  }
+}
+function renderScripts() {
+  $('scriptList').innerHTML = (libCache.scripts || []).map(s =>
+    `<div class="srow"><div class="stitle">${esc(s.title)}<div class="smeta">${s.sentences} 句 · ${esc(s.source)} · ${new Date(s.created*1000).toLocaleDateString()}</div></div>` +
+    `<button class="ghost" data-load="${s.id}">载入</button><button data-use="${s.id}">播放这稿</button><button class="ghost" data-del="${s.id}">删</button></div>`
+  ).join('') || '<div style="color:var(--dim);font-size:13px;padding:8px 0">稿子库为空，可点「存进稿子库」或「生成新稿」。</div>';
+  for (const b of $('scriptList').querySelectorAll('button')) {
+    if (b.dataset.load) b.onclick = () => act(null, '载入稿', async () => {
+      const s = libCache.scripts.find(x => x.id === b.dataset.load);
+      $('scriptBox').value = s.text; $('libTitle').value = s.title;
+      return '已载入「' + s.title + '」到编辑框（还没生效）';
+    });
+    if (b.dataset.use) b.onclick = () => act(null, '播放这稿', async () => {
+      const d = await postJSON('/api/library/use', {id: b.dataset.use, apply_now: true});
+      getState(); return '已切到「' + d.title + '」，' + d.sentences + ' 句，从头播';
+    });
+    if (b.dataset.del) b.onclick = () => act(null, '删除', async () => {
+      await postJSON('/api/library/script_delete', {id: b.dataset.del}); loadLibrary(); return '已删除该稿';
+    });
+  }
+}
+$('btnRefreshLib').onclick = () => act('btnRefreshLib', '刷新库', async () => { await loadLibrary(); return '话题 ' + (libCache.topics||[]).length + ' 条 · 稿子 ' + (libCache.scripts||[]).length + ' 套'; });
+$('btnAddTopic').onclick = () => act('btnAddTopic', '加话题', async () => {
+  const t = $('topicInput').value.trim(); if (!t) throw new Error('先写话题');
+  await postJSON('/api/library/topic', {title: t, note: window._genNote || ''});
+  await loadLibrary(); return '已加入话题库';
+});
+$('btnGenerate').onclick = () => act('btnGenerate', '生成新稿', async () => {
+  const topic = $('topicInput').value.trim();
+  if (!topic) throw new Error('先选一个话题或自己写一个');
+  $('genHint').textContent = '生成中…（最多 30 秒）';
+  const d = await postJSON('/api/generate', {topic, note: window._genNote || '', sentences: parseInt($('genSentences').value) || 12});
+  $('scriptBox').value = d.text;
+  $('libTitle').value = d.title;
+  await loadLibrary();
+  $('genHint').textContent = (d.used === 'ai' ? ('已用百炼 ' + d.model + ' 生成并存进稿子库（' + d.sentences + ' 句）。要播就点上方「保存并立即从头播」。')
+    : ('百炼文本额度不可用（' + (d.fallback_error || '').slice(0, 60) + '），已用本地话题模板生成并存进稿子库（' + d.sentences + ' 句）。') );
+  return d.used === 'ai' ? '新稿已生成（百炼）' : '新稿已生成（本地模板）';
+});
 function parseKw(id) {
   const v = $(id).value.trim();
   if (!v) return undefined;
@@ -312,11 +452,16 @@ $('btnParams').onclick = () => act('btnParams', '应用参数', async () => {
     if (v) pkw[k] = v;
   }
   const pf = parseInt($('prefetchInput').value);
+  const mg = parseInt($('mergeInput').value);
+  const gp = parseInt($('gapInput').value);
   await postJSON('/api/params', {voice: $('voiceSel').value, rate: parseFloat($('rateInput').value),
     min_gap: parseFloat($('minGapInput').value),
     window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined,
     per_kind_windows: Object.keys(pkw).length ? pkw : undefined,
-    prefetch_ahead: isFinite(pf) ? pf : undefined});
+    prefetch_ahead: isFinite(pf) ? pf : undefined,
+    merge_sentences: isFinite(mg) ? mg : undefined,
+    sentence_gap_ms: isFinite(gp) ? gp : undefined,
+    trim_silence: $('trimChk').checked});
   getState(); return '参数已生效（改音色/语速会让旧缓存失效，按需重新合成）';
 });
 // ---- 预生成 ----
@@ -437,6 +582,9 @@ $('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
   $('rateInput').value = s.params.rate; $('minGapInput').value = s.params.min_gap;
   $('windowInput').value = s.params.window.join(',');
   $('prefetchInput').value = (s.prefetch_ahead != null ? s.prefetch_ahead : 3);
+  $('mergeInput').value = (s.merge_sentences != null ? s.merge_sentences : 2);
+  $('gapInput').value = (s.sentence_gap_ms != null ? s.sentence_gap_ms : 150);
+  $('trimChk').checked = s.trim_silence !== false;
   if (s.params.voice) $('voiceSel').value = s.params.voice;
   for (const k of ['gift','chat','follow','member','like']) {
     const v = (s.params.per_kind_windows || {})[k];
@@ -444,6 +592,7 @@ $('btnTtsTest').onclick = () => act('btnTtsTest', '试听', async () => {
   }
   $('apiKeyHint').textContent = s.api_key_set ? '' : '还没填百炼 API Key：在上方输入框填 sk-… 即可开始合成（无需 .env）。';
   loadVoices();
+  loadLibrary();
 })();
 setInterval(getState, 2000);
 getState();

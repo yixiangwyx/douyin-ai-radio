@@ -17,10 +17,12 @@ class FakeTTS:
         return b"audio:" + " ".join(texts).encode()
 
 
-def _mk(tmp_path, script="第一句。\n第二句。\n第三句。", prefetch=0):
+def _mk(tmp_path, script="第一句。\n第二句。\n第三句。", prefetch=0, merge=1):
     o = Orchestrator("0", script, sink="dry", out_dir=str(tmp_path))
     o.tts = FakeTTS()
     o.prefetch_ahead = prefetch
+    o.merge_sentences = merge     # 这组测试按逐句语义断言计数
+    o.trim_silence = False
     return o
 
 

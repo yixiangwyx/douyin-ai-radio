@@ -30,6 +30,12 @@ def main():
                     help="自动预生成后面 N 句（0=关闭，边播边合成）")
     ap.add_argument("--prefetch-all", action="store_true",
                     help="启动时先把整稿全部预生成")
+    ap.add_argument("--merge", type=int, default=2,
+                    help="连续正文句合并成一次合成的句数（1=逐句，2-6=语气连贯、组内无停顿）")
+    ap.add_argument("--gap", type=float, default=150.0,
+                    help="块间停顿毫秒（0=首尾相接不留空）")
+    ap.add_argument("--no-trim", action="store_true",
+                    help="不裁每块首尾静音（默认裁，需要 ffmpeg）")
     ap.add_argument("--out", default="out/chunks")
     args = ap.parse_args()
 
@@ -50,7 +56,11 @@ def main():
                         model=args.model, speech_rate=args.rate,
                         out_dir=args.out, sink=args.sink)
     orch.prefetch_ahead = max(0, min(20, args.prefetch))
-    print(f"room={args.room} voice={args.voice} sink={args.sink} prefetch_ahead={orch.prefetch_ahead}")
+    orch.merge_sentences = max(1, min(6, args.merge))
+    orch.sentence_gap_ms = max(0.0, min(5000.0, args.gap))
+    orch.trim_silence = not args.no_trim
+    print(f"room={args.room} voice={args.voice} sink={args.sink} prefetch_ahead={orch.prefetch_ahead} "
+          f"merge={orch.merge_sentences} gap_ms={orch.sentence_gap_ms} trim={orch.trim_silence}")
     if args.prefetch_all:
         try:
             print(f"预生成整稿: {orch.prefetch_script(None)} 句")
