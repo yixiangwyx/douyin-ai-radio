@@ -1,10 +1,12 @@
 """编排器：读稿 → 逐句 TTS → 句边界插播互动 → 外放/落块。支持运行中控制（暂停/换稿/调参/换房）。"""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import threading
 import time
+from pathlib import Path
 
 from .events import InteractionQueue
 from .live import LiveCollector
@@ -29,6 +31,7 @@ class Orchestrator:
         self.segments = parse_script(script_text)
         self.scheduler = Scheduler(schedule or ScheduleConfig(), self.queue)
         self.chunk_writer = ChunkWriter(out_dir)
+        self.out_dir = out_dir        # 生成过的音频落 out_dir/cache，重启进程后仍可复用
         self.voice, self.model, self.speech_rate = voice, model, speech_rate
         self.api_key = api_key
         self.tts = None
@@ -44,6 +47,7 @@ class Orchestrator:
         self.ffplay: FFplaySink | None = None
         self.status = "init"
         self.log: list[str] = []
+        self._log_total = 0      # 已产生过的日志条数（单调游标，供增量拉取）
         self._pause = threading.Event()
         self._stop = threading.Event()
         self._restart = False
@@ -81,6 +85,8 @@ class Orchestrator:
         self._last_line_no = None
         self._rotate_due = False
         self.cache_size_peak = 0
+        self.disk_cache_hits = 0      # 命中上一次进程（重启前）生成的音频
+        self.disk_cache_writes = 0
 
     # ---------- 控制 API（供 web 控制台 / CLI 调用） ----------
 
@@ -328,25 +334,26 @@ class Orchestrator:
         self.collector.start()
         self.log_append(f"room: 切换到 {web_rid}")
 
-    def snapshot(self, events_n: int = 40, log_n: int = 40) -> dict:
+    def snapshot(self, events_n: int = 40, log_n: int = 40, log_after: int | None = None,
+                 lite: bool = False) -> dict:
         room = self.collector.room
         cfg = self.scheduler.cfg
         speech_total = sum(1 for s in self.segments if s.kind == "speech")
         prefix = f"{self.model}|{self.voice}|{self.speech_rate}|"
-        with self._tts_lock:
-            ready_sents = 0
-            ready_groups = 0
-            j = 0
-            while j < len(self.segments):
-                s = self.segments[j]
-                if s.kind != "speech":
-                    j += 1
-                    continue
-                idxs = self._group_at(j)
-                j = idxs[-1] + 1
-                if (prefix + self._group_cache_key(idxs)) in self._tts_cache:
-                    ready_sents += len(idxs)
-                    ready_groups += 1
+        ready_sents = 0
+        ready_groups = 0
+        j = 0
+        while j < len(self.segments):
+            s = self.segments[j]
+            if s.kind != "speech":
+                j += 1
+                continue
+            idxs = self._group_at(j)
+            j = idxs[-1] + 1
+            # 就绪 = 内存或磁盘已生成过（重启后页面仍显示"音频就绪"，不用重新生成）
+            if self._cache_hit(prefix + self._group_cache_key(idxs)):
+                ready_sents += len(idxs)
+                ready_groups += 1
         return {
             "status": self.status,
             "room": {
@@ -360,8 +367,12 @@ class Orchestrator:
             "inserts": self.scheduler.inserted_count,
             "segments": sum(1 for s in self.segments if s.kind in ("speech", "mark")),
             "chunks": len(self.chunk_writer.manifest),
+            "audio": self.chunk_writer.reuse_stats(),
             "events": self.queue.recent(events_n),
-            "log": self.log[-log_n:],
+            # 日志：给了 log_after 就只回增量（前端轮询不必每次重拉整段历史）
+            "log": (self.log[max(0, log_after - (self._log_total - len(self.log))):]
+                    if log_after is not None else self.log[-log_n:]),
+            "log_total": self._log_total,
             "params": {
                 "voice": self.voice, "model": self.model, "rate": self.speech_rate,
                 "min_gap": cfg.min_gap_s, "window": list(cfg.window_s),
@@ -381,6 +392,8 @@ class Orchestrator:
             "announced": self.scheduler.announced_count,
             "tts_calls": self.tts_calls,
             "cache_hits": self.cache_hits,
+            "disk_cache_hits": self.disk_cache_hits,
+            "disk_cache_writes": self.disk_cache_writes,
             "cache_size": len(self._tts_cache),
             "prefetch_ahead": self.prefetch_ahead,
             "prefetch_pending": self.prefetch_pending,
@@ -409,6 +422,7 @@ class Orchestrator:
 
     def log_append(self, line: str):
         self.log.append(f"[{time.strftime('%H:%M:%S')}] {line}")
+        self._log_total += 1   # 单调游标：前端据此只要增量，不用每次拉整段历史
         if len(self.log) > 600:
             self.log = self.log[-600:]
 
@@ -473,12 +487,29 @@ class Orchestrator:
         return audio
 
     def _synth_cached(self, key: str, texts: list[str]) -> bytes:
-        """文本没变就用缓存音频（循环重播不再请求百炼）；只有新内容才真实合成。"""
+        """文本没变就用缓存音频（循环重播不再请求百炼）；只有新内容才真实合成。
+
+        两层缓存：内存（本轮循环）+ 磁盘 out/chunks/cache（**重启服务也不用重新花钱**）。
+        """
         cache_key = f"{self.model}|{self.voice}|{self.speech_rate}|{key}"
+        disk_path = self._audio_cache_path(cache_key)
         with self._tts_lock:
             if cache_key in self._tts_cache:
                 self.cache_hits += 1
                 return self._tts_cache[cache_key]
+        if disk_path is not None:
+            try:
+                audio = disk_path.read_bytes()
+            except OSError:
+                audio = b""
+            if audio:
+                # 之前生成过（可能是上一次进程生成的）：直接复用，不请求百炼
+                self.disk_cache_hits += 1
+                self.cache_hits += 1
+                with self._tts_lock:
+                    self._tts_cache[cache_key] = audio
+                    self.cache_size_peak = max(self.cache_size_peak, len(self._tts_cache))
+                return audio
         audio = self._synth(texts)
         if audio:
             with self._tts_lock:
@@ -488,7 +519,21 @@ class Orchestrator:
                     # 只保留最近合成的，防止极长场次内存增长
                     for k in list(self._tts_cache)[:100]:
                         self._tts_cache.pop(k, None)
+            if disk_path is not None:
+                try:
+                    disk_path.parent.mkdir(parents=True, exist_ok=True)
+                    disk_path.write_bytes(audio)
+                    self.disk_cache_writes += 1
+                except OSError:
+                    pass
         return audio
+
+    def _audio_cache_path(self, cache_key: str) -> Path | None:
+        """生成过的音频按 (模型+音色+语速+文本) 落一份，重启进程后仍可复用。"""
+        if self.sink_name == "dry":
+            return None
+        h = hashlib.sha1(cache_key.encode("utf-8")).hexdigest()
+        return Path(self.out_dir) / "cache" / f"{h}.mp3"
 
     # ---------- 预生成（提前把后面几句合成好，播放时不被 TTS 拖节拍） ----------
 
@@ -519,6 +564,18 @@ class Orchestrator:
             return self._seg_cache_key(idxs[0], self.segments[idxs[0]])
         return "grp:" + ",".join(str(j) for j in idxs) + ":" + "|".join(self._group_texts(idxs))
 
+    def _full_cache_key(self, key: str) -> str:
+        """缓存键必须含模型/音色/语速：换任何一个都要重新生成。"""
+        return f"{self.model}|{self.voice}|{self.speech_rate}|{key}"
+
+    def _cache_hit(self, cache_key: str) -> bool:
+        """这段音频是否已经生成过（内存或磁盘，含上次进程留下的）。用于就绪统计与预生成排队。"""
+        with self._tts_lock:
+            if cache_key in self._tts_cache:
+                return True
+        p = self._audio_cache_path(cache_key)
+        return bool(p and p.exists())
+
     def _prefetch_todo(self, start: int, limit: int | None):
         """按'将要播放的组'排队（与 _play_pass 的分组一致，预生成的就是播放要用的那块音频）。"""
         todo = []
@@ -531,8 +588,8 @@ class Orchestrator:
                 continue
             idxs = self._group_at(j)
             j = idxs[-1] + 1
-            key = f"{self.model}|{self.voice}|{self.speech_rate}|{self._group_cache_key(idxs)}"
-            if key not in self._tts_cache:
+            key = self._group_cache_key(idxs)
+            if not self._cache_hit(self._full_cache_key(key)):
                 todo.append((idxs[0], key, self._group_texts(idxs)))
         return todo
 
@@ -578,13 +635,13 @@ class Orchestrator:
             for idx, key, texts in todo:
                 if self._stop.is_set() or self._restart:
                     return
-                audio = self._synth(texts)
+                # 走 _synth_cached：已生成过的（含上次进程留下的磁盘缓存）不再重复请求百炼，
+                # 新生成的也会落盘 —— 预生成的成果同样能跨重启复用。
+                audio = self._synth_cached(key, texts)
                 if not audio:
                     self.log_append(f"prefetch: 第{idx}组合成失败 "
                                     f"{self.tts.last_error if self.tts else ''}")
                     return
-                with self._tts_lock:
-                    self._tts_cache[key] = audio
                 with self._lock:
                     self.prefetch_done += 1
                     self.prefetch_pending = max(0, self.prefetch_pending - 1)

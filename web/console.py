@@ -15,6 +15,8 @@ import re
 import subprocess
 import sys
 import threading
+import urllib.parse
+from urllib.parse import urlparse
 from functools import partial
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -146,13 +148,13 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
-    def _send(self, code: int, body, ctype="application/json; charset=utf-8"):
+    def _send(self, code: int, body, ctype="application/json; charset=utf-8", cache=None):
         if isinstance(body, str):
             body = body.encode("utf-8")
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache or "no-store")
         self.end_headers()
         self.wfile.write(body)
 
@@ -167,7 +169,20 @@ class Handler(BaseHTTPRequestHandler):
             html = (ROOT / "web" / "console.html").read_text(encoding="utf-8")
             return self._send(200, html.encode("utf-8"), "text/html; charset=utf-8")
         if p == "/api/state":
-            return self._send(200, json.dumps(self.orch.snapshot(), ensure_ascii=False).encode())
+            q = urllib.parse.parse_qs(urlparse(self.path).query)
+            log_after = None
+            if q.get("log_after"):
+                try:
+                    log_after = max(0, int(q["log_after"][0]))
+                except ValueError:
+                    log_after = None
+            lite = bool(q.get("lite"))
+            # lite：轮询用，不带话术配置（前端另有 /api/phrases）；log_after 只要新增日志
+            snap = self.orch.snapshot(events_n=12 if lite else 40, log_after=log_after,
+                                      lite=lite)
+            if lite:
+                snap.pop("phrases", None)
+            return self._send(200, json.dumps(snap, ensure_ascii=False).encode())
         if p == "/api/script":
             return self._send(200, json.dumps({"text": self.orch.get_script()}, ensure_ascii=False).encode())
         if p == "/api/library":
@@ -214,8 +229,12 @@ class Handler(BaseHTTPRequestHandler):
             if not str(fp).startswith(str((ROOT / "out").resolve())) or not fp.is_file():
                 return self._send(404, b'{"error":"not found"}')
             data = fp.read_bytes()
-            ctype = "audio/mpeg" if fp.suffix == ".mp3" else "application/json"
-            return self._send(200, data, ctype)
+            if fp.suffix == ".mp3":
+                # 文件名带音频内容哈希 ⇒ 这个地址的内容永远不会变，浏览器可以永久缓存：
+                # 一轮循环把整稿下载一次，之后循环全部命中本地缓存（网络下行≈0）。
+                return self._send(200, data, "audio/mpeg",
+                                  cache="public, max-age=31536000, immutable")
+            return self._send(200, data, "application/json", cache="no-store")
         return self._send(404, b'{"error":"no route"}')
 
     # ---- POST ----

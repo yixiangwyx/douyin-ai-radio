@@ -262,6 +262,13 @@
 <script>
 let autoPlay = false, playedThrough = 0, audioQueue = [], busy = false;
 let audioCtx = null, activeSources = [], nextStartAt = 0, metaCache = null;
+// 已下载/解码过的音频按内容哈希缓存：循环重播时不再向服务端重复取同样的字节。
+// 上限 150 段（约几十 MB 解码后音频），超出按先进先出丢弃正在播的不受影响。
+const bufCache = new Map(), BUF_CACHE_MAX = 150;
+function bufCachePut(k, v) {
+  bufCache.set(k, v);
+  if (bufCache.size > BUF_CACHE_MAX) bufCache.delete(bufCache.keys().next().value);
+}
 const $ = id => document.getElementById(id);
 
 async function api(path, body) {
@@ -303,10 +310,17 @@ async function postJSON(path, body) {
   if (!r.ok) throw new Error(d.error || ('HTTP ' + r.status));
   return d;
 }
+let logBuf = [], logCursor = 0;   // 日志增量缓冲：轮询只要新增条目，不重拉整段历史
 async function getState() {
   try {
-    const r = await api('/api/state'); if (!r.ok) return;
+    const r = await api('/api/state?lite=1&log_after=' + logCursor); if (!r.ok) return;
     const s = await r.json();
+    if (s.log && s.log.length) {
+      logBuf = logBuf.concat(s.log);
+      if (logBuf.length > 300) logBuf = logBuf.slice(-300);
+    }
+    if (typeof s.log_total === 'number') logCursor = s.log_total;
+    s.log = logBuf;          // 渲染统一用本地缓冲
     render(s);
   } catch(e) { $('status').textContent = '服务连接中断，重试中…'; }
 }
@@ -332,6 +346,12 @@ function render(s) {
   const pct = total ? Math.round(ready * 100 / total) : 0;
   $('readyPct').innerHTML = '音频就绪 <b>' + ready + '/' + total + '</b>（' + pct + '%）'
     + ' · 自动预生成 ' + (s.prefetch_ahead || 0) + ' 句';
+  // 复用统计：证明"循环和重启都不重复花钱、不重复下载"
+  const au = s.audio || {};
+  const reusedKB = Math.round((au.bytes_reused || 0) / 1024);
+  $('readyPct').innerHTML += ' · 服务端音频复用 <b>' + (au.blocks_reused || 0) + '</b> 次'
+    + (s.disk_cache_hits ? '（其中 ' + s.disk_cache_hits + ' 次来自上次运行）' : '')
+    + ' · 避免重复写盘 <b>' + reusedKB + '</b> KB';
   $('readyBar').style.width = pct + '%';
   const feed = $('feed');
   const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', interrupt:'插播'};
@@ -370,11 +390,15 @@ async function drainAudio(total) {
     while (playedThrough < total) {
       const i = playedThrough;
       playedThrough++;
-      let buf = null;
-      try {
-        const r = await fetch('/chunks/' + String(i).padStart(4, '0') + '.mp3');
-        if (r.ok) buf = await audioCtx.decodeAudioData(await r.arrayBuffer());
-      } catch (e) { buf = null; }
+      const url = (meta[i] && meta[i].url) || ('/chunks/' + String(i).padStart(4, '0') + '.mp3');
+      let buf = bufCache.get(url);
+      if (!buf) {
+        try {
+          const r = await fetch(url);
+          if (r.ok) buf = await audioCtx.decodeAudioData(await r.arrayBuffer());
+        } catch (e) { buf = null; }
+        if (buf) bufCachePut(url, buf);   // 同一内容（循环重播）不再重复下载/解码
+      }
       if (!buf) continue;
       const gap = ((meta[i] && meta[i].gap_before_ms) || 0) / 1000;
       const at = Math.max(audioCtx.currentTime + 0.02, (nextStartAt || 0) + gap);
