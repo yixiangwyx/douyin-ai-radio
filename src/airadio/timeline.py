@@ -115,13 +115,25 @@ def _split_sentences(frag: str, protected: bool) -> list[Segment]:
 @dataclass
 class ScheduleConfig:
     min_gap_s: float = 45.0          # 两次插播的最小间隔
-    window_s: tuple = (60.0, 150.0)  # 事件最短等待（窗口下限到期即插，上限用于随机跳过制造不规则）
+    window_s: tuple = (60.0, 150.0)  # 全局默认随机插播窗口（未在 per_kind 里单独配置的类别用它）
+    # 每种互动独立的"事件→计划插播"随机延迟区间（秒）。缺省 None=用 window_s。
+    per_kind_windows: dict = field(default_factory=dict)
+    # 插播优先级：数字越大越优先（同一到期批次里先选它，够 max_events 就不带别的）
+    kind_priority: dict = field(default_factory=lambda: {
+        "gift": 100, "chat": 80, "follow": 60, "member": 40, "like": 10})
     max_events: int = 3              # 单次插播最多合并几条
     urgent_value: int = 100          # 礼物价值≥此钻石数可插队
     urgent_min_gap_s: float = 25.0
     silence_fallback_s: float = 180.0  # 长时间无任何互动时的兜底话术
     chat_max_len: int = 40
     templates: dict = field(default_factory=lambda: dict(_DEFAULT_TEMPLATES))
+
+    def window_for(self, kind: str) -> tuple:
+        w = self.per_kind_windows.get(kind)
+        if w:
+            lo = max(0.0, float(w[0]))
+            return (lo, max(lo + 1.0, float(w[1])))
+        return self.window_s
 
 
 class Scheduler:
@@ -171,7 +183,8 @@ class Scheduler:
                 if e.kind == "gift" and (e.value or 0) >= self.cfg.urgent_value:
                     self._planned[id(e)] = e.t + self.cfg.urgent_min_gap_s * 0.5
                 else:
-                    self._planned[id(e)] = e.t + self.rng.uniform(*self.cfg.window_s)
+                    lo, hi = self.cfg.window_for(e.kind)
+                    self._planned[id(e)] = e.t + self.rng.uniform(lo, hi)
         self._pending = [e for e in self._pending if now - e.t <= self.q.ttl]
         if not self._pending:
             last_event_at = self.q.stats.get("last_event_at", 0.0)
@@ -185,14 +198,17 @@ class Scheduler:
         due = [e for e in self._pending if self._planned.get(id(e), 1e18) <= now]
         if not due:
             return None
+        # 按优先级降序（礼物>弹幕>关注>进场>点赞）；同级内只取最新数据（计划时刻新的在前）
+        pri = self.cfg.kind_priority
+        due.sort(key=lambda e: (-pri.get(e.kind, 0), -(self._planned.get(id(e), 0))))
+        candidates = due
         urgent = [e for e in due if e.kind == "gift" and (e.value or 0) >= self.cfg.urgent_value]
-        candidates = urgent if urgent else due
         gap = now - self.last_burst_at
         min_gap = self.cfg.urgent_min_gap_s if urgent else self.cfg.min_gap_s
         if self.last_burst_at and gap < min_gap:
             return None
 
-        picked = candidates[-self.cfg.max_events:]
+        picked = candidates[:self.cfg.max_events]
         picked_ids = {id(e) for e in picked}
         self._pending = [e for e in self._pending if id(e) not in picked_ids]
         for e in picked:

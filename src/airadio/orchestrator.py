@@ -1,6 +1,8 @@
 """编排器：读稿 → 逐句 TTS → 句边界插播互动 → 外放/落块。支持运行中控制（暂停/换稿/调参/换房）。"""
 from __future__ import annotations
 
+import json
+import os
 import threading
 import time
 
@@ -27,9 +29,15 @@ class Orchestrator:
         self.voice, self.model, self.speech_rate = voice, model, speech_rate
         self.api_key = api_key
         self.tts = None
+        self.tts_init_error = ""
         if sink != "dry":
-            self.tts = TTSStreamer(api_key=api_key, model=model, voice=voice,
-                                   speech_rate=speech_rate, on_audio=self._on_audio)
+            try:
+                self.tts = TTSStreamer(api_key=api_key, model=model, voice=voice,
+                                       speech_rate=speech_rate, on_audio=self._on_audio)
+            except RuntimeError as e:
+                # 没填 Key 也能先启动（采集/调度/页面照常可用），Key 在页面填好后即时启用
+                self.tts_init_error = str(e)
+
         self.ffplay: FFplaySink | None = None
         self.status = "init"
         self.log: list[str] = []
@@ -39,6 +47,11 @@ class Orchestrator:
         self._seg_i = 0            # 稿内播放进度（暂停后从这里继续）
         self._pending_script: str | None = None
         self._lock = threading.Lock()
+        # TTS 缓存：稿子未变的句子/固定话术只合成一次，循环复用；新互动才重新合成。
+        # key 含 model+voice+rate：换音色/语速后旧缓存自动失效、按需重新合成。
+        self._tts_cache: dict[str, bytes] = {}
+        self.tts_calls = 0      # 真实调用百炼次数
+        self.cache_hits = 0     # 缓存命中（复用音频）次数
 
     # ---------- 控制 API（供 web 控制台 / CLI 调用） ----------
 
@@ -93,13 +106,26 @@ class Orchestrator:
 
     def update_params(self, *, voice: str | None = None, model: str | None = None,
                       rate: float | None = None, min_gap: float | None = None,
-                      window: tuple | list | None = None) -> None:
+                      window: tuple | list | None = None,
+                      per_kind_windows: dict | None = None) -> None:
         cfg = self.scheduler.cfg
         if min_gap is not None:
             cfg.min_gap_s = max(0.0, float(min_gap))
         if window is not None:
             w0, w1 = (float(window[0]), float(window[1]))
             cfg.window_s = (max(0.0, w0), max(max(0.0, w0) + 1.0, w1))
+        if per_kind_windows:
+            for kind, w in per_kind_windows.items():
+                if kind not in ("member", "follow", "chat", "like", "gift"):
+                    continue
+                if w is None:
+                    cfg.per_kind_windows.pop(kind, None)
+                    continue
+                lo, hi = float(w[0]), float(w[1])
+                lo = max(0.0, lo)
+                cfg.per_kind_windows[kind] = (lo, max(lo + 1.0, hi))
+            self.log_append("params: 各互动插播区间 " + json.dumps(
+                {k: [round(a), round(b)] for k, (a, b) in cfg.per_kind_windows.items()}))
         rebuild = False
         if voice:
             self.voice = voice.strip()
@@ -116,6 +142,23 @@ class Orchestrator:
                                    on_audio=self._on_audio)
             self.log_append(f"params: model={self.model} voice={self.voice} rate={self.speech_rate}")
         self.log_append(f"params: min_gap={cfg.min_gap_s}s window={cfg.window_s}")
+
+    def has_api_key(self) -> bool:
+        return bool(self.api_key) or bool(os.environ.get("DASHSCOPE_API_KEY"))
+
+    def set_api_key(self, key: str) -> bool:
+        """运行中填入百炼 API Key：立即启用/重建 TTS（不用重启进程）。"""
+        key = (key or "").strip()
+        if not key:
+            return False
+        self.api_key = key
+        os.environ["DASHSCOPE_API_KEY"] = key
+        if self.sink_name != "dry":
+            self.tts = TTSStreamer(api_key=key, model=self.model, voice=self.voice,
+                                   speech_rate=self.speech_rate, on_audio=self._on_audio)
+            self.tts_init_error = ""
+            self.log_append("params: 百炼 Key 已设置，TTS 已启用")
+        return True
 
     def set_room(self, web_rid: str) -> None:
         """切换直播间（线程安全重启采集器）。"""
@@ -148,8 +191,14 @@ class Orchestrator:
             "params": {
                 "voice": self.voice, "model": self.model, "rate": self.speech_rate,
                 "min_gap": cfg.min_gap_s, "window": list(cfg.window_s),
+                "per_kind_windows": {k: list(v) for k, v in cfg.per_kind_windows.items()},
             },
-            "tts_error": self.tts.last_error if self.tts else ("(dry 模式，未配置 API Key)" if self.sink_name == "dry" else ""),
+            "tts_calls": self.tts_calls,
+            "cache_hits": self.cache_hits,
+            "cache_size": len(self._tts_cache),
+            "tts_error": (self.tts.last_error if self.tts else
+                          (self.tts_init_error or ("(dry 模式，未合成)" if self.sink_name == "dry" else ""))),
+            "api_key_set": self.has_api_key(),
         }
 
     def log_append(self, line: str):
@@ -190,6 +239,8 @@ class Orchestrator:
                     continue
                 if self._pending_script is not None:  # 下一轮开头生效
                     self.apply_pending_script()
+                elif self._seg_i >= len(self.segments):
+                    self._seg_i = 0  # 整轮自然播完 → 从头循环（音频走缓存，不再请求TTS）
                 if max_loops:
                     loop += 1
                     if loop >= max_loops:
@@ -203,7 +254,23 @@ class Orchestrator:
     def _synth(self, texts: list[str]) -> bytes:
         if self.tts is None:  # dry 模式：不合成，只走调度
             return b""
+        self.tts_calls += 1
         return self.tts.synth(texts)
+
+    def _synth_cached(self, key: str, texts: list[str]) -> bytes:
+        """文本没变就用缓存音频（循环重播不再请求百炼）；只有新内容才真实合成。"""
+        cache_key = f"{self.model}|{self.voice}|{self.speech_rate}|{key}"
+        if cache_key in self._tts_cache:
+            self.cache_hits += 1
+            return self._tts_cache[cache_key]
+        audio = self._synth(texts)
+        if audio:
+            self._tts_cache[cache_key] = audio
+            if len(self._tts_cache) > 400:
+                # 只保留最近合成的，防止极长场次内存增长
+                for k in list(self._tts_cache)[:100]:
+                    self._tts_cache.pop(k, None)
+        return audio
 
     def _play_pass(self):
         i = self._seg_i
@@ -219,14 +286,17 @@ class Orchestrator:
             if seg.kind == "pause":
                 time.sleep(seg.duration_ms / 1000.0)
                 continue
-            texts = [seg.text]
             kind = seg.kind
-            if seg.kind == "mark":
+            if seg.kind == "speech":
+                # 稿子未变的句子：首轮合成一次，后续循环直接复用音频
+                texts = [seg.text]
+                cache_key = f"seg:{i - 1}:{seg.text}"
+            else:  # mark：固定话术模板，占位符没被互动数据填时也能缓存
                 latest = self.queue.items[-1] if self.queue.items else None
                 text = self.scheduler.render_mark(seg.text, latest)
                 texts = [text]
-                kind = "mark"
-            audio = self._synth(texts)
+                cache_key = f"mark:{text}"
+            audio = self._synth_cached(cache_key, texts)
             self.chunk_writer.write(kind, " ".join(texts), audio or b"")
             self.log_append(f"play[{kind}]: {' '.join(texts)}")
             est = self._estimate_elapsed_s(texts)
@@ -235,6 +305,7 @@ class Orchestrator:
             nxt_protected = self._next_boundary_protected(i)
             insert_text = self.scheduler.on_boundary(time.time(), nxt_protected)
             if insert_text:
+                # 互动插播内容每次都不同 → 总是真实合成（不缓存）
                 ins_audio = self._synth([insert_text])
                 self.chunk_writer.write("interrupt", insert_text, ins_audio or b"")
                 self.log_append(f"INSERT: {insert_text}")

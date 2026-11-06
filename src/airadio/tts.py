@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from typing import Callable, Optional
 
+import dashscope
 from dashscope.audio.tts_v2 import AudioFormat, ResultCallback, SpeechSynthesizer
 
 # 常用音色（cosyvoice-v2）：longxiaochun_v2 女、longxiaoxia_v2、longcheng_v2 男、longwan_v2 等
@@ -64,6 +65,7 @@ class TTSStreamer:
         """把多段文本作为一次流式任务合成，返回 mp3 字节。"""
         chunks: list[bytes] = []
         cb = _Callback(self.on_audio, chunks)
+        dashscope.api_key = self.api_key  # SpeechSynthesizer 只读全局 api_key，必须显式设置
         ss = SpeechSynthesizer(model=self.model, voice=self.voice, format=self.fmt,
                                volume=self.volume, speech_rate=self.speech_rate,
                                callback=cb)

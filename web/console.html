@@ -79,6 +79,11 @@
 
 <div class="card">
   <b style="font-size:15px">语音与插播参数</b>
+  <div class="row">
+    <input id="apiKeyInput" type="password" placeholder="百炼 API Key（sk-…）留空=用服务器 .env" style="flex:1">
+    <button class="ghost" id="btnApiKey">保存 Key</button>
+  </div>
+  <div class="hint" id="apiKeyHint"></div>
   <div class="grid">
     <div><label>百炼音色（cosyvoice-v2）</label>
       <select id="voiceSel" style="width:100%;min-height:40px;background:#0c1116;color:var(--tx);border:1px solid #2b3641;border-radius:8px;padding:10px">
@@ -92,7 +97,29 @@
     </div>
     <div><label>语速 0.5–2.0</label><input id="rateInput" type="number" step="0.1" min="0.5" max="2"></div>
     <div><label>插播最小间隔（秒）</label><input id="minGapInput" type="number" step="5" min="5"></div>
-    <div><label>随机窗口（秒）低,高</label><input id="windowInput" placeholder="60,150"></div>
+    <div><label>全局默认随机窗口（秒）低,高</label><input id="windowInput" placeholder="60,150"></div>
+  </div>
+  <div style="border-top:1px solid #2b3641;margin-top:10px;padding-top:10px">
+    <b style="font-size:14px">生成新音色（复刻你自己的声音）</b>
+    <div class="row" style="margin-top:6px">
+      <button class="ghost" id="btnMic">🎙 录10–20秒</button>
+      <span id="micTimer" class="status"></span>
+      <input type="file" id="voiceFile" accept="audio/*" style="flex:1;min-height:38px">
+    </div>
+    <div class="row" style="margin-top:6px">
+      <input id="voicePrefix" placeholder="音色名（小写字母数字，如 xiangge）" style="flex:1">
+      <button id="btnClone">生成新音色</button>
+    </div>
+    <div class="hint">录 10–20 秒连贯朗读（至少连续说 5 秒、别带背景音乐）→ 生成后自动选中并试听。已生成的复刻音色在列表最上方。</div>
+    <div class="hint" id="cloneHint"></div>
+  </div>
+  <label style="margin-top:12px">每类互动的随机插播区间（秒，低,高）— 留空=跟随全局默认</label>
+  <div class="grid">
+    <div><label>礼物 gift</label><input id="kw_gift" placeholder="15,40"></div>
+    <div><label>弹幕 chat</label><input id="kw_chat" placeholder="20,50"></div>
+    <div><label>关注 follow</label><input id="kw_follow" placeholder="30,80"></div>
+    <div><label>进场 member</label><input id="kw_member" placeholder="45,120"></div>
+    <div><label>点赞 like</label><input id="kw_like" placeholder="90,180"></div>
   </div>
   <div class="row" style="margin-top:8px">
     <button id="btnParams">应用参数</button>
@@ -100,6 +127,7 @@
     <button class="ghost" id="btnTtsTest">试听</button>
   </div>
   <div class="hint" id="ttsErr"></div>
+  <div class="hint">优先级：礼物&gt;弹幕&gt;关注&gt;进场&gt;点赞；同一批到期只念最新的几条。稿子没变时循环复用已合成音频（只对新插播内容调 TTS），换音色/语速后自动重新合成。</div>
 </div>
 
 <div class="card">
@@ -134,7 +162,7 @@ function render(s) {
     (s.paused ? ' · <b class=warn>已暂停</b>' : '') +
     (s.tts_error ? ' · <b class=err>TTS: '+s.tts_error+'</b>' : '');
   const c = s.stats.chat||0, g = s.stats.gift||0, f = s.stats.follow||0, m = s.stats.member||0, l = s.stats.like||0;
-  $('stats').innerHTML = `<span>弹幕 <b>${c}</b></span><span>礼物 <b>${g}</b></span><span>关注 <b>${f}</b></span><span>进场 <b>${m}</b></span><span>点赞 <b>${l}</b></span><span>已插播 <b>${s.inserts}</b></span><span>稿件句数 <b>${s.segments}</b></span>`;
+  $('stats').innerHTML = `<span>弹幕 <b>${c}</b></span><span>礼物 <b>${g}</b></span><span>关注 <b>${f}</b></span><span>进场 <b>${m}</b></span><span>点赞 <b>${l}</b></span><span>已插播 <b>${s.inserts}</b></span><span>稿件句数 <b>${s.segments}</b></span><span>TTS调用 <b>${s.tts_calls}</b> / 缓存复用 <b>${s.cache_hits}</b></span>`;
   const feed = $('feed');
   const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', interrupt:'插播'};
   let html = '';
@@ -187,13 +215,122 @@ $('btnRoom').onclick = async () => { const v=$('roomInput').value.trim(); if(v){
 $('btnLoadScript').onclick = async () => { const r=await api('/api/script'); const d=await r.json(); $('scriptBox').value=d.text; };
 $('btnSaveScript').onclick = async () => { const r=await api('/api/script',{text:$('scriptBox').value,apply_now:false}); const d=await r.json(); alert(d.ok?('已保存，共 '+d.sentences+' 句，下一段生效'):d.error); };
 $('btnSaveNow').onclick = async () => { const r=await api('/api/script',{text:$('scriptBox').value,apply_now:true}); const d=await r.json(); alert(d.ok?('已生效，共 '+d.sentences+' 句，从头播放'):d.error); getState(); };
+function parseKw(id) {
+  const v = $(id).value.trim();
+  if (!v) return undefined;
+  const a = v.split(',').map(x => parseFloat(x));
+  return (a.length === 2 && isFinite(a[0]) && isFinite(a[1])) ? a : undefined;
+}
 $('btnParams').onclick = async () => {
   const w = $('windowInput').value.split(',').map(x=>parseFloat(x));
+  const pkw = {};
+  for (const k of ['gift','chat','follow','member','like']) {
+    const v = parseKw('kw_' + k);
+    if (v) pkw[k] = v;
+  }
   await api('/api/params', {voice: $('voiceSel').value, rate: parseFloat($('rateInput').value),
     min_gap: parseFloat($('minGapInput').value),
-    window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined});
+    window: (w.length===2 && isFinite(w[0]) && isFinite(w[1])) ? w : undefined,
+    per_kind_windows: Object.keys(pkw).length ? pkw : undefined});
   getState();
 };
+// ---- 百炼 Key ----
+$('btnApiKey').onclick = async () => {
+  const key = $('apiKeyInput').value.trim();
+  if (!key) { $('apiKeyHint').textContent = 'Key 不能为空'; return; }
+  const r = await api('/api/api_key', {key});
+  const d = await r.json();
+  $('apiKeyHint').textContent = d.ok ? '已保存，音色与合成即刻可用' : ('失败: ' + d.error);
+  if (d.ok) { $('apiKeyInput').value=''; loadVoices(); }
+  getState();
+};
+
+// ---- 录音 / 选文件 → 生成新音色 ----
+let mediaStream = null, recorder = null, recChunks = [], recMime = '', recStart = 0;
+const canMic = !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+if (!canMic) $('btnMic').textContent = '🎙 浏览器不支持录音，用下方选文件';
+$('btnMic').onclick = async () => {
+  if (recorder && recorder.state === 'recording') { recorder.stop(); return; }
+  try {
+    mediaStream = await navigator.mediaDevices.getUserMedia({audio: true});
+  } catch (e) {
+    $('cloneHint').textContent = '无法用麦克风（非 HTTPS 或权限被拒）：录一段存成文件再用右侧“选择音频文件”。';
+    return;
+  }
+  const tries = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
+  recMime = tries.find(t => MediaRecorder.isTypeSupported(t)) || '';
+  recorder = new MediaRecorder(mediaStream, recMime ? {mimeType: recMime} : undefined);
+  recChunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) recChunks.push(e.data); };
+  recorder.onstop = () => {
+    mediaStream.getTracks().forEach(t => t.stop());
+    const secs = Math.round((Date.now() - recStart) / 1000);
+    $('micTimer').textContent = '';
+    $('btnMic').textContent = '🎙 录10–20秒';
+    window._recBlob = new Blob(recChunks, {type: recMime || 'audio/webm'});
+    window._recFmt = (recMime || 'audio/webm').split(';')[0].split('/')[1] || 'webm';
+    $('cloneHint').textContent = `已录 ${secs}s，${window._recBlob ? (window._recBlob.size/1024|0)+'KB' : '空'} → 填个音色名后点“生成新音色”`;
+  };
+  recStart = Date.now(); recChunks = [];
+  recorder.start();
+  $('btnMic').textContent = '⏹ 停止录音';
+  const iv = setInterval(() => {
+    if (!recorder || recorder.state !== 'recording') { clearInterval(iv); $('micTimer').textContent=''; return; }
+    const secs = Math.round((Date.now() - recStart) / 1000);
+    $('micTimer').textContent = secs + 's' + (secs >= 15 ? '（够了，可停）' : '');
+  }, 1000);
+};
+$('voiceFile').onchange = () => {
+  const f = $('voiceFile').files[0]; if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    window._recBlob = null;
+    window._recB64 = String(rd.result).split(',',2)[1] || '';
+    const ext = (f.name.split('.').pop() || 'webm').toLowerCase();
+    window._recFmt = ext === 'mpeg' ? 'mp3' : ext;
+    $('cloneHint').textContent = `已选文件 ${f.name} (${(f.size/1024|0)}KB) → 填个音色名后点“生成新音色”`;
+  };
+  rd.readAsDataURL(f);
+};
+$('btnClone').onclick = async () => {
+  const prefix = $('voicePrefix').value.trim().toLowerCase();
+  if (!/^[a-z0-9]{1,9}$/.test(prefix)) { $('cloneHint').textContent = '音色名用小写字母数字，<10 位'; return; }
+  let payload = {prefix};
+  if (window._recB64) { payload.audio_base64 = window._recB64; payload.format = window._recFmt; }
+  else if (window._recBlob && window._recBlob.size) {
+    const buf = await window._recBlob.arrayBuffer();
+    let bin = '', u = new Uint8Array(buf);
+    for (let i = 0; i < u.length; i++) bin += String.fromCharCode(u[i]);
+    payload.audio_base64 = btoa(bin); payload.format = window._recFmt || 'webm';
+  } else { $('cloneHint').textContent = '先录音或选择音频文件（10–20 秒连贯朗读）'; return; }
+  $('btnClone').disabled = true; $('cloneHint').textContent = '生成中…';
+  const r = await api('/api/clone_voice', payload);
+  const d = await r.json();
+  $('btnClone').disabled = false;
+  if (!d.ok) { $('cloneHint').textContent = '生成失败: ' + d.error; return; }
+  $('cloneHint').textContent = '已生成音色 ' + d.voice_id + '，正在试听…';
+  await loadVoices();
+  $('voiceSel').value = d.voice_id;
+  const pr = await api('/api/preview_voice', {voice: d.voice_id, text: '大家好，这是用我的声音生成的新音色，欢迎来到直播间。'});
+  if (pr.ok) { const b = await pr.blob(); new Audio(URL.createObjectURL(b)).play(); }
+  $('cloneHint').textContent = '新音色已生成并选中：' + d.voice_id;
+};
+async function loadVoices() {
+  try {
+    const r = await api('/api/voices'); const d = await r.json();
+    const sel = $('voiceSel'); const cur = sel.value;
+    Array.from(sel.querySelectorAll('option[data-cloned]')).forEach(o => o.remove());
+    const first = sel.querySelector('option');
+    for (const v of (d.voices || [])) {
+      const o = document.createElement('option');
+      o.value = v.voice_id; o.dataset.cloned = '1';
+      o.textContent = '🎙 ' + v.voice_id + (v.status && v.status !== 'READY' ? '（' + v.status + '）' : '');
+      sel.insertBefore(o, first);
+    }
+    if (cur) sel.value = cur;
+  } catch (e) {}
+}
+
 $('btnTtsTest').onclick = async () => {
   const text = $('ttsTestInput').value.trim(); if (!text) return;
   $('ttsErr').textContent = '合成中…';
@@ -207,6 +344,12 @@ $('btnTtsTest').onclick = async () => {
   $('rateInput').value = s.params.rate; $('minGapInput').value = s.params.min_gap;
   $('windowInput').value = s.params.window.join(',');
   if (s.params.voice) $('voiceSel').value = s.params.voice;
+  for (const k of ['gift','chat','follow','member','like']) {
+    const v = (s.params.per_kind_windows || {})[k];
+    if (v) $('kw_' + k).value = v.join(',');
+  }
+  $('apiKeyHint').textContent = s.api_key_set ? '' : '还没填百炼 API Key：在上方输入框填 sk-… 即可开始合成（无需 .env）。';
+  loadVoices();
 })();
 setInterval(getState, 2000);
 getState();

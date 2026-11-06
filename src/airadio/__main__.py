@@ -23,14 +23,24 @@ def main():
     ap.add_argument("--sink", default="file", choices=["file", "ffplay", "dry"],
                     help="file=写 out/chunks 供浏览器播放；ffplay=本机扬声器外放；dry=不合成只验证调度")
     ap.add_argument("--min-gap", type=float, default=45.0, help="插播最小间隔秒")
-    ap.add_argument("--window", default="60,150", help="随机插播窗口秒，如 60,150")
-    ap.add_argument("--loops", type=int, default=0, help="稿子循环次数，0=无限")
+    ap.add_argument("--window", default="60,150", help="全局默认随机插播窗口秒，如 60,150")
+    ap.add_argument("--kind-window", default="", help="每类互动独立区间，如 gift=15,40;chat=20,50;like=90,180")
+    ap.add_argument("--loops", type=int, default=0, help="稿子循环次数，0=无限(默认无限循环)")
     ap.add_argument("--out", default="out/chunks")
     args = ap.parse_args()
 
     script_text = pathlib.Path(args.script).read_text(encoding="utf-8")
     w0, w1 = (float(x) for x in args.window.split(","))
-    cfg = ScheduleConfig(min_gap_s=args.min_gap, window_s=(w0, w1))
+    per_kind = {}
+    if args.kind_window:
+        for part in args.kind_window.split(";"):
+            if "=" not in part:
+                continue
+            kind, rng = part.split("=", 1)
+            lo, hi = (float(x) for x in rng.split(","))
+            per_kind[kind.strip()] = (lo, hi)
+    cfg = ScheduleConfig(min_gap_s=args.min_gap, window_s=(w0, w1),
+                        per_kind_windows=per_kind)
 
     orch = Orchestrator(args.room, script_text, schedule=cfg, voice=args.voice,
                         model=args.model, speech_rate=args.rate,

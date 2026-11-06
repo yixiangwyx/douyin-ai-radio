@@ -136,16 +136,18 @@ class LiveCollector:
                     self._stop.wait(30)
                     continue
                 self.on_status(f"live:{self.room.room_id}")
-                asyncio.run(self._ws_loop())
+                # 签名必须在 asyncio.run 之外生成：py_mini_racer 0.14 内部绑定当前
+                # event loop，若在 loop 内调用，该 loop 关闭后重连会报
+                # "Event loop is closed"（真实踩过的坑）。
+                url = build_wss_url(self.room.room_id, self.room.ttwid)
+                asyncio.run(self._ws_loop(url))
             except Exception as e:
                 self.last_error = f"{type(e).__name__}: {e}"
                 self.on_status(f"error:{self.last_error}")
                 self._stop.wait(15)
 
-    async def _ws_loop(self):
+    async def _ws_loop(self, url: str):
         import websockets
-        assert self.room
-        url = build_wss_url(self.room.room_id, self.room.ttwid)
         async with websockets.connect(
                 url, max_size=None, ping_interval=25, ping_timeout=20,
                 additional_headers={"cookie": f"ttwid={self.room.ttwid}", "user-agent": UA}) as ws:

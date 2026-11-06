@@ -39,10 +39,22 @@ if "_http" in tree:
     print("TREE FAILED:", tree); raise SystemExit(1)
 print("tree:", tree["sha"])
 
-ref = api(f"/repos/{REPO}/git/refs", {"ref": "refs/heads/main", "sha": tree["sha"]})
+# 以远端 main 当前 commit 为父，创建新 commit
+cur = api(f"/repos/{REPO}/git/refs/heads/main")
+parents = []
+if isinstance(cur, dict) and cur.get("object", {}).get("sha"):
+    parents = [cur["object"]["sha"]]
+commit = api(f"/repos/{REPO}/git/commits", {
+    "message": "web控制台：手机端改稿/百炼参数/实时互动流/播放控制",
+    "tree": tree["sha"], "parents": parents})
+if "_http" in commit:
+    print("COMMIT FAILED:", commit); raise SystemExit(1)
+print("commit:", commit["sha"])
+
+ref = api(f"/repos/{REPO}/git/refs", {"ref": "refs/heads/main", "sha": commit["sha"]})
 if "_http" in ref and ref["_http"] == 422:  # ref exists -> force update
     ref = api(f"/repos/{REPO}/git/refs/heads/main",
-              {"sha": tree["sha"], "force": True}, method="PATCH")
+              {"sha": commit["sha"], "force": True}, method="PATCH")
 print("ref result:", json.dumps(ref, ensure_ascii=False)[:200])
 
 branches = api(f"/repos/{REPO}/branches")
