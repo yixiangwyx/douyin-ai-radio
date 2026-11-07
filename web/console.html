@@ -922,7 +922,12 @@ $('btnDesignVoice').onclick = () => act('btnDesignVoice', '生成音色', async 
 /* ---------------- AI生成 ---------------- */
 $('btnLocalLlm').onclick = () => act('btnLocalLlm', '找本机模型', async () => {
   const d = await (await api('/api/local_llm')).json();
-  if (!d.ok) { $('localLlmBadge').textContent = '本机模型 没找到'; throw new Error('这台电脑/局域网里没找到在跑的 OpenAI 兼容模型（默认找 127.0.0.1:8080 和 172.18.0.1:8080；也可以在 API 地址里自己填）'); }
+  if (!d.ok) {
+    $('localLlmBadge').textContent = '本机模型 没找到';
+    const tried = (d.tried || []).join(' , ');
+    throw new Error(tried ? ('这台电脑/局域网里没找到在跑的 OpenAI 兼容模型（试过：' + tried + '）。也可以在上面的 API 地址里自己填')
+                          : '这台电脑/局域网里没找到在跑的 OpenAI 兼容模型，可以在上面的 API 地址里自己填');
+  }
   $('genBackend').value = 'openai';
   $('genBaseUrl').value = d.base_url;
   $('genModel').value = d.models[0];

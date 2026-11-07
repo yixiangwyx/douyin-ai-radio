@@ -24,6 +24,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from urllib.parse import urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -506,9 +507,11 @@ class Handler(BaseHTTPRequestHandler):
         if p == "/api/local_llm":
             # 找这台电脑/局域网里已经在跑的 OpenAI 兼容模型（翔哥那台推理机）：
             # 用它写直播稿不花百炼文本额度
+            if _auth_required(self) is None:
+                return
             tried = []
             # 默认只探本机；局域网那台模型用环境变量 AIRADIO_LOCAL_LLM 指定
-            cands = [os.environ.get("AIRADIO_LOCAL_LLM", ""), "http://127.0.0.1:8080/v1"]
+            cands = [os.environ.get("AIRADIO_LOCAL_LLM", "")] + [f"http://127.0.0.1:{p}/v1" for p in (8080, 8081)]
             cands += [c.strip() for c in os.environ.get("AIRADIO_LOCAL_LLM_EXTRA", "").split(",") if c.strip()]
             for base in cands:
                 base = (base or "").strip().rstrip("/")
@@ -523,7 +526,7 @@ class Handler(BaseHTTPRequestHandler):
                         return _send(self, 200, {"ok": True, "base_url": base, "models": ids})
                 except Exception:
                     continue
-            return _send(self, 200, {"ok": False, "base_url": "", "models": []})
+            return _send(self, 200, {"ok": False, "base_url": "", "models": [], "tried": tried})
         if p == "/api/gen_cfg":
             user = _auth_required(self)
             if user is None:
@@ -1184,7 +1187,7 @@ def main(argv: list[str] | None = None):
     ap.add_argument("--room", default="", help="默认直播间号（页面上「开始新直播」时可改）")
     ap.add_argument("--port", type=int, default=8010)
     ap.add_argument("--idle", type=int, default=90, help="多少秒没有请求就判定页面已关、自动停止该用户的电台")
-    ap.add_argument("--admin-password", default=os.environ.get("AIRADIO_ADMIN_PASSWORD", "e5232382"))
+    ap.add_argument("--admin-password", default=os.environ.get("AIRADIO_ADMIN_PASSWORD", ""))
     ap.add_argument("--sink", default="file", choices=["file", "ffplay", "dry"])
     ap.add_argument("--model", default="cosyvoice-v2")
     ap.add_argument("--window", default="25,40")
@@ -1199,6 +1202,9 @@ def main(argv: list[str] | None = None):
     global ACCOUNTS, HUB, DEFAULTS, LOCAL_MODE
     LOCAL_MODE = bool(args.local)
     ACCOUNTS = Accounts(ROOT / "data" / "users.json", admin_password=args.admin_password)
+    if not args.local and not args.admin_password:
+        print("提示：管理员初始口令是 changeme（没给 --admin-password / AIRADIO_ADMIN_PASSWORD 时）。"
+              "云端多用户版请先在 /admin 里改掉。")
     w0, w1 = (float(x) for x in args.window.split(","))
     os.environ["DOUYIN_COOKIE"] = args.douyin_cookie or os.environ.get("DOUYIN_COOKIE", "")
     DEFAULTS = {"room": args.room, "model": args.model, "window": (w0, w1), "min_gap": args.min_gap,

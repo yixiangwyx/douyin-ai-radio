@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """端到端真实验证：注册 → 管理员批准 → 登录 → 开播 → 状态 → 停用 → 被拦 → 离开自动停止。
-用法: python3 scripts/e2e_users.py [base_url]   (默认 http://127.0.0.1:8010)
+用法: AIRADIO_ADMIN_PASSWORD=*** python3 scripts/e2e_users.py [base_url]   (默认 http://127.0.0.1:8010)
 """
 import json
+import os
 import sys
 import time
 import urllib.request
@@ -45,7 +46,8 @@ def main():
     print("    未批准就登录 →", user.call("/api/login", {"username": name, "password": "abc12345"}))
 
     print("[2] 管理员登录后台并批准")
-    print("   ", admin.call("/api/login", {"username": "admin", "password": "e5232382"})[0])
+    pw = os.environ.get("AIRADIO_ADMIN_PASSWORD", "")
+    print("   ", admin.call("/api/login", {"username": "admin", "password": pw})[0])
     code, d = admin.call("/api/admin/users", {})
     pend = [u["username"] for u in d["users"] if u["status"] == "pending"]
     print("    待审批列表:", pend)
