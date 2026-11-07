@@ -147,6 +147,13 @@ def model_info(model: str) -> dict | None:
     return None
 
 
+# 电台默认音色优先选偏男性/沉稳的（翔哥的默认方向是中年男性稳重沙哑）；
+# 官方表里 traits 带「男」且不含「童」的就是候选，按这个顺序挑。
+_RADIO_PREFER = ["longcheng_v2", "longtian_v2", "longanyun", "longxiaobai_v2", "longanchong",
+                 "longshu_v3", "longshuo_v3", "longtian_v3", "longcheng_v3", "longanyang",
+                 "longanzhi_v3", "longxiu_v3", "longlaotie_v3"]
+
+
 def default_voice_for(model: str) -> str:
     info = model_info(model)
     if not info:
@@ -154,7 +161,29 @@ def default_voice_for(model: str) -> str:
     voices = _OFFICIAL.get(model, [])
     if info["needs_custom_voice"]:
         return ""                      # v3.5：必须自建音色
-    return voices[0][0] if voices else ""
+    if not voices:
+        return ""
+    ok = {v for v, _n, _t in voices}
+    for cand in _RADIO_PREFER:       # 电台要的是男声/沉稳，别兜底到女声
+        if cand in ok:
+            return cand
+    for v, _n, trait in voices:      # 再退一步：清单里第一个带「男」的
+        if "男" in trait and "童" not in trait:
+            return v
+    return voices[0][0]
+
+
+def model_of_custom_voice(voice: str) -> str:
+    """自建音色的 ID 一定以生成它的模型名开头（复刻=`{model}-{prefix}-{uuid}`，设计=`{model}-vd-{prefix}-{uuid}`）。
+    据此反推它属于哪个模型 —— 换音色时必须连模型一起换，否则合成必失败（百炼 418）。"""
+    voice = (voice or "").strip()
+    if not voice:
+        return ""
+    names = sorted(model_names(), key=len, reverse=True)   # 先匹配长的：v3.5 前缀和 v3 重叠
+    for m in names:
+        if voice.startswith(m + "-"):
+            return m
+    return ""
 
 
 def is_usable_voice(model: str, voice: str) -> bool:

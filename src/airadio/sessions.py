@@ -32,6 +32,7 @@ class Session:
         self.last_seen = time.time()
         self.thread: threading.Thread | None = None
         self.busy = False
+        self.keep_alive = False      # PC 单机模式：不因空闲被回收（关了页面电台也不停）
 
     def touch(self):
         self.last_seen = time.time()
@@ -80,7 +81,7 @@ class SessionHub:
         gone: list[Session] = []
         with self._lock:
             for name, s in list(self._sessions.items()):
-                if s.orch.paused:
+                if s.orch.paused or s.keep_alive:
                     continue
                 if s.idle_s() > limit:
                     gone.append(s)
@@ -128,6 +129,9 @@ class SessionHub:
             orch.update_params(**({k: v for k, v in (saved or {}).items() if v is not None}))
             if default_params:
                 orch.update_params(**{k: v for k, v in default_params.items() if v is not None})
+        # AI 生成新稿接播（讲到一半自动生成、播完自动接；控制台注入回调）
+        if getattr(self, "wire_hook", None):
+            self.wire_hook(sess)
         sess.thread = threading.Thread(target=orch.run, daemon=True, name=f"radio-{username}")
         sess.thread.start()
         with self._lock:

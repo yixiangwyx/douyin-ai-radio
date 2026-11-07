@@ -25,7 +25,7 @@ def _load_console():
 @pytest.fixture()
 def srv(tmp_path):
     mod = _load_console()
-    mod.ACCOUNTS = mod.Accounts(tmp_path / "users.json", admin_password="e5232382")
+    mod.ACCOUNTS = mod.Accounts(tmp_path / "users.json", admin_password="admin-test-pw")
     mod.DEFAULTS = {"room": "", "model": "cosyvoice-v2", "window": (10.0, 20.0), "min_gap": 20.0,
                     "sink": "dry", "merge": 2, "gap": 100, "prefetch": 0, "script_title": "测试稿"}
     mod.HUB = mod.SessionHub(tmp_path / "users", tmp_path / "chunks",
@@ -141,7 +141,7 @@ def _admin_client(base):
                 self.cookie = sc.split(";")[0]
             return code, json.loads(raw.decode())
     a = A(base)
-    assert a.call("/api/login", {"username": "admin", "password": "e5232382"})[0] == 200
+    assert a.call("/api/login", {"username": "admin", "password": "admin-test-pw"})[0] == 200
     return a
 
 

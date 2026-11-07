@@ -4,29 +4,29 @@ import json
 from airadio.accounts import Accounts, hash_password, valid_username, verify_password
 
 
-def _acct(tmp_path, pw="e5232382"):
+def _acct(tmp_path, pw="admin-test-pw"):
     return Accounts(tmp_path / "users.json", admin_password=pw)
 
 
 def test_password_hash_not_plaintext(tmp_path):
-    salt, digest = hash_password("e5232382")
-    assert digest != "e5232382" and len(digest) == 64
-    assert verify_password("e5232382", salt, digest)
+    salt, digest = hash_password("admin-test-pw")
+    assert digest != "admin-test-pw" and len(digest) == 64
+    assert verify_password("admin-test-pw", salt, digest)
     assert not verify_password("e5232383", salt, digest)
     # 同一个密码两次哈希不同（有随机盐）
-    assert hash_password("e5232382")[1] != digest
+    assert hash_password("admin-test-pw")[1] != digest
 
 
 def test_admin_seeded_and_cannot_be_disabled(tmp_path):
     a = _acct(tmp_path)
     assert a.status_of("admin") == "active"
     assert a.role_of("admin") == "admin"
-    assert a.login("admin", "e5232382")["role"] == "admin"
+    assert a.login("admin", "admin-test-pw")["role"] == "admin"
     assert a.disable("admin") is False           # 管理员不能被停用
     assert a.delete_user("admin") is False
     # 密码不能明文落盘
     raw = json.loads((tmp_path / "users.json").read_text(encoding="utf-8"))
-    assert "e5232382" not in json.dumps(raw)
+    assert "admin-test-pw" not in json.dumps(raw)
 
 
 def test_register_is_pending_and_blocked_until_approved(tmp_path):

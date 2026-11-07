@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import os
 import re
 import random
 import time
@@ -189,6 +190,115 @@ def draft_from_topic(topic: str, note: str = "", sentences: int = 10) -> str:
     lines.append(random.choice(_CTA))
     return _clean_draft("\n".join(lines), max(3, min(40, int(sentences or 10))))
 
+
+
+# ------------------------------------------------------------------
+# 按「直播内容框架提示词」生成新稿（AI生成选项卡 / 开播生成 / 半稿自动生成共用）
+# ------------------------------------------------------------------
+
+DEFAULT_TEXT_MODEL = "qwen3.5-plus"
+
+# 内置默认框架提示词：用户没有自己的提示词时用它；页面上可以直接改/另存
+DEFAULT_GEN_PROMPT = """你是电台主播的直播稿助手，按下面的直播内容框架写要直接朗读出来的口播稿。
+框架：
+1) 开场3-5句：先给观众一个留下来的理由，说清这场能听到什么、什么时候讲重点。
+2) 正文按段落推进：每段一个主题，每段8-15行，一行只讲一件事；段落之间自然衔接，不写小标题。
+3) 内容具体可操作：说清怎么做、看哪个数、阈值大概多少，不写空话口号。
+4) 每5-10行做一次小闭环：抛问题、给结论、留一个下期要讲的东西。
+5) 穿插互动引导：点名式提问、二选一，引导公屏弹幕。
+6) 收尾3-5句：总结这场，预告下一场。
+硬性要求：短句、口语化，不用书面语；不要编号、标题、markdown、表情符号；不编造具体账号数据、不承诺收益；不用极限词和功效承诺；只输出稿子正文，不输出解释。"""
+
+
+def _openai_chat(cfg: dict, system: str, user: str, model: str) -> str:
+    """OpenAI 兼容后端（DeepSeek / Moonshot / 本地 Ollama / vLLM / 百炼 compatible-mode 都行）。"""
+    import requests
+    base = (cfg.get("base_url") or "").strip().rstrip("/")
+    if not base:
+        raise RuntimeError("OpenAI 兼容后端要填 API 地址（Base URL，例 https://api.deepseek.com/v1）")
+    url = base if base.endswith("/chat/completions") else base + "/chat/completions"
+    key = cfg.get("api_key") or ""
+    resp = requests.post(
+        url, timeout=120,
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        json={"model": model, "temperature": float(cfg.get("temperature") or 0.8),
+              "messages": [{"role": "system", "content": system},
+                           {"role": "user", "content": user}]})
+    if resp.status_code != 200:
+        raise RuntimeError(f"{resp.status_code}: {resp.text[:200]}")
+    try:
+        return resp.json()["choices"][0]["message"]["content"] or ""
+    except Exception:
+        raise RuntimeError("返回里没有 choices[0].message.content，检查一下模型名和地址")
+
+
+def generate_script_llm(cfg: dict, *, avoid: list[str] | None = None,
+                        system_override: str | None = None,
+                        api_key_fallback: str | None = None) -> tuple[str, str]:
+    """按用户的生成配置写一整稿。cfg: {backend, model, base_url, api_key, prompt, lines}。
+
+    avoid = 本场已经播过的稿名，写进指令里防止同一场反复讲同一个主题。
+    返回 (稿子正文, 使用的模型名)。失败抛 RuntimeError（带可读原因）。
+    """
+    backend = (cfg.get("backend") or "dashscope").strip()
+    model = (cfg.get("model") or DEFAULT_TEXT_MODEL).strip()
+    lines = max(6, min(200, int(cfg.get("lines") or 40)))
+    system = (system_override or cfg.get("prompt") or DEFAULT_GEN_PROMPT).strip()
+    user = f"按上面的直播内容框架，生成一场新直播的口播稿，约 {lines} 行，每行一句，主题自定。\n"
+    avoid = [a for a in (avoid or []) if a]
+    if avoid:
+        user += "本场已经播过这些稿子：" + "；".join(avoid) + "。换一个主题和角度，内容和它们不要重复。\n"
+
+    if backend == "openai":
+        raw = _openai_chat(cfg, system, user, model)
+        text = _clean_draft(raw, lines)
+        if not text:
+            raise RuntimeError("模型返回空稿")
+        return text, model
+
+    try:
+        from dashscope import Generation
+        import dashscope
+    except Exception as e:  # pragma: no cover
+        raise RuntimeError(f"dashscope 不可用: {e}")
+    key = cfg.get("api_key") or api_key_fallback or os.environ.get("DASHSCOPE_API_KEY")
+    if not key:
+        raise RuntimeError("没有填文本模型的 API Key（AI生成选项卡里填，或用服务器 .env 的 DASHSCOPE_API_KEY）")
+    dashscope.api_key = key
+    # 首选模型不行就换备选轮一遍（免费额度到顶 / 模型改名 都不该把整条流水线卡死）
+    chain = [model] + [m for m in (DEFAULT_TEXT_MODEL, "qwen-plus", "qwen-turbo", "qwen-flash")
+                       if m and m != model]
+    last_err = ""
+    for m in chain:
+        for attempt in range(2):
+            try:
+                r = Generation.call(model=m,
+                                    messages=[{"role": "system", "content": system},
+                                              {"role": "user", "content": user}],
+                                    result_format="message", temperature=0.8)
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                break
+            if r.status_code == 200:
+                try:
+                    raw = r.output.choices[0].message.content or ""
+                except Exception:
+                    raw = ""
+                text = _clean_draft(raw, lines)
+                if text:
+                    return text, m
+                last_err = "模型返回空稿"
+                break
+            code = getattr(r, "code", "")
+            last_err = f"{r.status_code} {code} {getattr(r, 'message', '')[:120]}"
+            if code == "Throttling.RateQuota":
+                time.sleep(2.0 + attempt * 2.0)
+                continue
+            break   # 额度/权限类错误换下一个模型
+    if "AllocationQuota" in last_err or "Free quota" in last_err:
+        raise RuntimeError("百炼这个模型免费额度已用完（账号要去百炼控制台充值/开通付费，"
+                           "或在「AI生成」页改用别的模型 / 换成 OpenAI 兼容后端）")
+    raise RuntimeError(f"生成失败：{last_err}")
 
 
 def _clean_draft(raw: str, want: int) -> str:

@@ -44,7 +44,7 @@ class FakeResp:
 @pytest.fixture()
 def srv(tmp_path, monkeypatch):
     mod = _load_console()
-    mod.ACCOUNTS = mod.Accounts(tmp_path / "users.json", admin_password="e5232382")
+    mod.ACCOUNTS = mod.Accounts(tmp_path / "users.json", admin_password="admin-test-pw")
     mod.DEFAULTS = {"room": "", "model": "cosyvoice-v2", "window": (10.0, 20.0), "min_gap": 20.0,
                     "sink": "dry", "merge": 1, "gap": 100, "prefetch": 0, "script_title": "测试稿"}
     mod.HUB = mod.SessionHub(tmp_path / "users", tmp_path / "chunks",
@@ -91,7 +91,7 @@ def srv(tmp_path, monkeypatch):
                 return code, raw.decode()[:200]
 
     c = C()
-    c.call("/api/login", {"username": "admin", "password": "e5232382"})
+    c.call("/api/login", {"username": "admin", "password": "admin-test-pw"})
     yield c, captured
     httpd.shutdown()
     mod.HUB.stop_all()

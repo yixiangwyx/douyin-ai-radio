@@ -12,11 +12,13 @@
     <h1 style="margin:0">📻 AI电台</h1>
     <div class="row" style="gap:6px">
       <span class="badge" id="whoBadge">–</span>
+      <span class="badge" id="voiceBadge" title="现在用的是哪个音色">🎙 音色 –</span>
       <button class="ghost" id="btnStart" style="min-height:34px;padding:0 10px;font-size:13px">开始新直播</button>
       <button class="ghost" id="btnLogout" style="min-height:34px;padding:0 10px;font-size:13px">退出</button>
     </div>
   </div>
-  <div class="status" id="status" style="margin-top:8px">连接中…</div>
+  <div class="status" id="voiceLine" style="margin-top:6px">音色：还没选</div>
+  <div class="status" id="status" style="margin-top:4px">连接中…</div>
   <div class="stats" id="stats"></div>
   <div class="row" style="margin-top:8px">
     <button id="btnPause">暂停</button>
@@ -32,6 +34,7 @@
 
 <div class="tabs" id="tabs">
   <button data-tab="live" class="on">实时互动</button>
+  <button data-tab="gen">AI生成</button>
   <button data-tab="script">稿子</button>
   <button data-tab="voice">音色</button>
   <button data-tab="phrases">话术</button>
@@ -56,6 +59,53 @@
     <div class="hint">只有这一个页面在看的这段时间里，服务端才在采这个房间；页面关掉超过 <b id="idleS">–</b> 秒会自动停止（不挂后台）。</div>
     <div class="savebar"><button class="ghost" onclick="toast('这一页不需要保存')">本页无需保存</button></div>
   </div>
+</div>
+
+<!-- ============ AI生成（大模型配置 + 直播内容框架提示词） ============ -->
+<div class="tabbody" data-body="gen">
+  <div class="card">
+    <b style="font-size:15px">对接的大模型（生成新稿用；和播音的音色是两回事）</b>
+    <div class="grid" style="margin-top:6px">
+      <div><label>类型</label><select id="genBackend">
+        <option value="dashscope">阿里百炼（dashscope）</option>
+        <option value="openai">OpenAI 兼容（DeepSeek / Kimi / 本地 Ollama 等）</option>
+      </select></div>
+      <div><label>模型名</label><input id="genModel" placeholder="例 qwen3.5-plus / deepseek-chat"></div>
+    </div>
+    <label>API 地址（OpenAI 兼容才需要填；百炼留空）</label>
+    <input id="genBaseUrl" placeholder="例 https://api.deepseek.com/v1">
+    <div class="row" style="margin-top:6px">
+      <button class="ghost" id="btnLocalLlm">用这台电脑上已有的模型（不花百炼额度）</button>
+      <span class="badge" id="localLlmBadge">本机模型 –</span>
+    </div>
+    <label>文本模型的 API Key（留空 = 用播音那个百炼 Key）</label>
+    <input id="genApiKey" type="password" placeholder="sk-…">
+    <div class="grid">
+      <div><label>每稿大概多少行（一行一段）</label><input id="genLines" type="number" min="6" max="200" step="5"></div>
+      <div><label>讲到几成时自动生成下一稿</label><input id="genAt" type="number" min="10" max="90" step="5"></div>
+    </div>
+    <label style="display:flex;align-items:center;gap:6px;margin-top:8px">
+      <input type="checkbox" id="genAutoChk" style="width:auto;min-height:auto">
+      直播中自动接播：当前稿讲到一半后台生成新稿，播完自动接上（每稿只用一次，用完不保留）
+    </label>
+    <div class="hint" id="genCfgHint"></div>
+  </div>
+  <div class="card">
+    <b style="font-size:15px">直播内容框架提示词（可保存多套，开播时选一套）</b>
+    <div class="row" style="margin-top:6px">
+      <input id="genTplTitle" placeholder="这套框架的名字（例：电台留人型 / 情感夜话型）" style="flex:1">
+      <button class="ghost" id="btnSaveTpl" style="flex-shrink:0">保存提示词</button>
+    </div>
+    <textarea id="genPrompt" placeholder="粘贴你的直播内容框架提示词：开场怎么说、正文怎么推进、怎么互动、怎么收尾"></textarea>
+    <div class="row" style="margin-top:6px">
+      <button id="btnGenNow">按上面的提示词生成新稿</button>
+      <button class="ghost" id="btnGenPreview">只生成不播放</button>
+    </div>
+    <div class="hint">「生成新稿」：生成完直接从头播这套新稿；「只生成不播放」：先看稿子，满意再去「稿子」页改。</div>
+    <div class="hint" id="genHint"></div>
+    <div id="genTplList" class="scriptlist"></div>
+  </div>
+  <div class="savebar"><button id="btnSaveGenCfg">保存生成配置（立即生效）</button></div>
 </div>
 
 <!-- ============ 稿子 ============ -->
@@ -107,6 +157,7 @@
     <b style="font-size:14px">生成新音色（填提示词 / 录你自己的声音，都行）</b>
     <label style="margin-top:6px">方式 A · 填提示词描述想要的音色（不用录音）</label>
     <textarea id="voicePrompt" placeholder="例：一位三十岁左右的女性，声音温柔知性，语速偏慢，适合直播间的安抚式讲解" style="min-height:64px;font-size:13px"></textarea>
+    <div class="hint">默认方向（翔哥）：<b>中年男性，55岁左右，嗓音稳重略带沙哑，低沉有质感</b> — 打开本页时已自动填好，直接改也行。</div>
     <div class="row" style="margin-top:4px">
       <input id="voicePreview" placeholder="试听文本（生成时用它出一段样例音，可改）" style="flex:1">
     </div>
@@ -117,7 +168,8 @@
       <input type="file" id="voiceFile" accept="audio/*" style="flex:1">
     </div>
     <div class="row" style="margin-top:6px">
-      <input id="voicePrefix" placeholder="音色名：英文小写字母数字，&lt;10位（如 xiangge01）" style="flex:1">
+      <input id="voicePrefix" placeholder="音色名关键字：英文小写字母数字，&lt;10位（如 xiangge01；留空=male55，会自动加时间码）" style="flex:1">
+      <input id="voiceLabel" placeholder="给这个音色起的中文名字（列表里显示它，可留空）" style="flex:1">
       <button id="btnDesignVoice">按提示词生成</button>
       <button id="btnClone">用录音生成</button>
     </div>
@@ -128,7 +180,15 @@
     <div class="row"><input id="ttsTestInput" placeholder="试听文字" style="flex:1"><button class="ghost" id="btnTtsTest">试听当前音色</button></div>
     <div class="hint" id="ttsErr"></div>
   </div>
-  <div class="savebar"><button id="btnSaveVoice">保存模型/语速（立即生效）</button></div>
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <b style="font-size:15px">我生成的音色（列表用生成时的提示词做名字）</b>
+      <button class="ghost" id="btnVoiceRefresh" style="min-height:34px;padding:0 10px;font-size:13px">刷新列表</button>
+    </div>
+    <div class="hint" id="voiceListHint">上面「语音模型」选哪个，就列哪个模型的音色。🎙 = 本机生成过的（可以改名/删除）；🔒 = 你在百炼后台或别的工具做的，这里只显示不替你删。</div>
+    <div id="voiceList" class="scriptlist"></div>
+  </div>
+  <div class="savebar"><button id="btnSaveVoice">设为当前音色（在播就立即换，没在播就记为下次开播用的）</button></div>
 </div>
 
 <!-- ============ 话术 ============ -->
@@ -254,16 +314,37 @@
       <label style="margin-top:4px">粘贴新稿（一行一段）</label>
       <textarea id="startPaste" style="min-height:90px;font-size:13px"></textarea>
     </div>
-    <label style="margin-top:8px">本场音色关键字（用它生成一个新的音色）</label>
-    <input id="startVoiceKey" placeholder="英文小写字母数字 &lt;10 位，例：qinhun01。会用它生成符合这个方向的新音色">
-    <label style="margin-top:4px">想要什么样的声音（可留空，我按关键字生成）</label>
-    <textarea id="startVoiceDesc" placeholder="例：三十岁上下女性，声音温柔亲切，语速中等，长时间听不累" style="min-height:60px;font-size:13px"></textarea>
+    <label style="margin-top:8px">或用 AI 现生成一套新稿</label>
+    <select id="startGenTpl"></select>
+    <div class="row" style="margin-top:4px">
+      <label style="flex:1;display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="startGenChk" checked style="width:auto;min-height:auto">
+        开播前按提示词生成新稿（生成完直接开播）
+      </label>
+      <label style="flex:1;display:flex;align-items:center;gap:6px;margin:0">
+        <input type="checkbox" id="startAutoGenChk" checked style="width:auto;min-height:auto">
+        直播中讲到一半自动生成下一稿
+      </label>
+    </div>
+    <div class="hint">生成失败会直接告诉你（不会播一套没生成的稿）；那种情况取消勾选就能用现有稿开播。</div>
+    <label style="margin-top:8px">本场音色方向（默认：中年男性55岁·稳重沙哑）</label>
+    <div class="grid">
+      <div><label>音色关键字（会自动加时间码生成新音色名）</label><input id="startVoiceKey" value="male55"></div>
+      <div><label>生成新音色用哪个模型</label><select id="startVoiceModel"></select></div>
+    </div>
+    <div class="row" style="margin-top:6px">
+      <label style="margin:0;min-width:110px">或直接用已生成的音色</label>
+      <select id="startVoicePick" style="flex:1"></select>
+      <button class="ghost" id="btnStartVoiceRefresh">刷新我的音色</button>
+    </div>
+    <label style="margin-top:4px">想要什么样的声音（默认已填好，可改）</label>
+    <textarea id="startVoiceDesc" style="min-height:60px;font-size:13px"></textarea>
     <div class="row" style="margin-top:10px">
       <button id="btnStartGo">生成新音色并开始</button>
       <button class="ghost" id="btnStartSkip">跳过，用现有音色开始</button>
       <button class="ghost" id="btnStartCancel">取消</button>
     </div>
-    <div class="hint">每开一场都建议生成一个新的音色（关键字只用来命名与描述方向）。跳过就沿用你上次用的音色。</div>
+    <div class="hint">每开一场都会自动生成一个新的音色名（默认关键字 + 时间码）。跳过就沿用你上次用的音色。</div>
     <div class="hint" id="startHint"></div>
   </div>
 </div>
@@ -283,9 +364,12 @@ function showTab(name) {
 for (const b of document.querySelectorAll('#tabs button')) b.onclick = () => showTab(b.dataset.tab);
 showTab(localStorage.getItem(TAB_KEY) || 'live');
 
-/* ---------------- 播放（Web Audio 排程接播） ---------------- */
+/* ---------------- 播放 / 开播入口 ----------------
+   「开始连续播放」= 开播入口：电台没在跑时它先弹开播向导（可以先去各选项卡配好参数再回来点）；
+   电台在跑时它就是浏览器外放的开关。除这个入口外，任何地方都不会自动弹开播窗。 */
 let autoPlay = localStorage.getItem('airadio_autoplay') === '1';
 let playedThrough = 0, busy = false, epochSeen = null;
+window.__hasSession = false;
 let audioCtx = null, activeSources = [], nextStartAt = 0;
 const bufCache = new Map();                 // 按内容哈希 URL 缓存已解码音频：循环不再重复下载
 function bufCachePut(url, buf) { bufCache.set(url, buf); if (bufCache.size > 150) bufCache.delete(bufCache.keys().next().value); }
@@ -327,6 +411,27 @@ function stopAudioQueue() {
   activeSources = []; nextStartAt = 0;
 }
 
+/* ---------------- 音频独占（防止两个标签页同时播 = "另一个音色还在播"） ----------------
+   单机版只有一个浏览器进程，但很容易开着两个标签页/窗口：它们各自 drain 同一份
+   manifest，听起来就是"两套声音/两个音色重叠"。这里让同一时刻只有一个标签页出声。 */
+const TAB_ID = Math.random().toString(36).slice(2);
+const PLAYER_KEY = 'airadio_player_tab';
+let audioOwner = true;                     // 本标签页是否拥有播放权
+function playerClaim() {
+  try {
+    const raw = localStorage.getItem(PLAYER_KEY);
+    if (!raw) return true;
+    const cur = JSON.parse(raw);
+    if (cur.tab === TAB_ID) return true;
+    if (Date.now() - (cur.at || 0) > 6000) return true;   // 那个标签页已经不跳动了：接管
+    return false;
+  } catch (e) { return true; }
+}
+function playerHeartbeat() {
+  try { localStorage.setItem(PLAYER_KEY, JSON.stringify({tab: TAB_ID, at: Date.now()})); } catch (e) {}
+}
+setInterval(() => { if (autoPlay) playerHeartbeat(); }, 2000);
+
 /* ---------------- 状态轮询（lite + 日志增量游标） ---------------- */
 let logBuf = [], logCursor = 0, polling = false;
 async function getState() {
@@ -336,7 +441,7 @@ async function getState() {
     const r = await api('/api/state?lite=1&log_after=' + logCursor);
     if (!r.ok) {
       const d = await r.json().catch(() => ({}));
-      if (r.status === 410 && d.need_start) { $('status').innerHTML = '<b class=warn>' + esc(d.error) + '</b>'; openStartWizard(); }
+      if (r.status === 410 && d.need_start) { window.__hasSession = false; $('status').innerHTML = '<b class=warn>这套电台没在跑</b> — 先配参数，配好后点最下面「开始连续播放」开播'; return; }
       else if (r.status === 401) gotoLogin();
       return;
     }
@@ -354,6 +459,13 @@ async function getState() {
 }
 
 function render(s) {
+  window.__hasSession = true;
+  // 顶部音色显示：以正在跑的这套电台为准（在播就一定显示它实际用的音色）
+  if (s.params && (s.params.voice || s.params.model)) {
+    VOICE_CUR = {model: s.params.model || VOICE_CUR.model, voice: s.params.voice || VOICE_CUR.voice,
+                 not_running: false};
+    renderVoiceLine();
+  }
   const st = $('status');
   st.innerHTML = '房间 ' + esc(s.room.web_rid || '-') + ' · ' + esc(s.room.title || '') +
     (s.room.audio_room ? ' <b class=warn>电台房</b>' : '') + ' — ' +
@@ -372,9 +484,16 @@ function render(s) {
     : (dl.gift_available ? '<span style="color:var(--ok)">登录 Cookie 已生效，礼物消息正常接收。</span>' : '');
 
   const pos = (s.seg_index != null && s.seg_count) ? Math.min(s.seg_index, s.seg_count) : 0;
+  const aig = s.ai_gen || {};
+  let genNote = '';
+  if (aig.busy) genNote += ' · AI生成下一稿中…';
+  else if (aig.q) genNote += ' · AI新稿待播 ' + aig.q + ' 套';
+  if (aig.one) genNote += '（当前是AI稿，只用一次）';
+  if (aig.err) genNote += ' · <b class=err>生成失败: ' + esc(aig.err) + '</b>';
   $('playPos').textContent = '播放进度 第 ' + pos + ' / ' + (s.seg_count || 0) + ' 段'
     + (s.script_title ? ' · 当前稿：' + s.script_title : '')
-    + (s.prefetch_running ? ' · 预生成中 ' + (s.prefetch_done||0) + '/' + ((s.prefetch_done||0)+(s.prefetch_pending||0)) : '');
+    + genNote
+    + (s.prefetch_running ? ' · 预生成音频中 ' + (s.prefetch_done||0) + '/' + ((s.prefetch_done||0)+(s.prefetch_pending||0)) : '');
   const ready = s.cache_ready || 0, total = s.cache_total || 0, pct = total ? Math.round(ready*100/total) : 0;
   const au = s.audio || {};
   $('readyPct').innerHTML = '音频就绪 <b>' + ready + '/' + total + '</b>（' + pct + '%）· 复用 <b>' + (au.blocks_reused||0) + '</b> 次'
@@ -382,7 +501,8 @@ function render(s) {
   $('readyBar').style.width = pct + '%';
   if (s.session) { $('idleS').textContent = s.session.idle_stop_s; $('idleS2').textContent = s.session.idle_stop_s; }
 
-  // 服务端换了播放位置（从头重播/跳句/换稿）→ 清掉已排好的队列，从新起点接播
+  // 服务端换了播放位置（暂停/继续/跳句/从头重播/换稿/换音色）→ 清掉已排好的队列
+  // 这一步是"点暂停后还有别的音色在播"的根治点：不清就会把暂停前排好的块全播完
   if (typeof s.playback_epoch === 'number' && epochSeen !== null && s.playback_epoch !== epochSeen) {
     stopAudioQueue();
     playedThrough = (typeof s.play_start_chunk === 'number') ? s.play_start_chunk : s.chunks;
@@ -390,6 +510,8 @@ function render(s) {
     toast('已从新位置接播（旧队列已清空）');
   }
   if (typeof s.playback_epoch === 'number') epochSeen = s.playback_epoch;
+  // 服务端暂停 = 浏览器也必须立刻静音（原来这里照播不误，是重叠/暂停后仍在响的来源）
+  if (s.paused && activeSources.length) { stopAudioQueue(); }
 
   const feed = $('feed');
   const kindName = {chat:'弹幕', gift:'礼物', follow:'关注', member:'进场', like:'点赞', badge:'灯牌'};
@@ -409,10 +531,17 @@ function render(s) {
   $('btnPause').textContent = s.paused ? '继续' : '暂停';
   $('btnPause').className = s.paused ? '' : 'warn';
   if (s.session) $('acctInfo').textContent = '登录名 ' + s.session.username + '（这台设备空闲 ' + s.session.idle_s + ' 秒后会自动停止；当前在线 ' + s.session.online_users + ' 人）';
-  if (autoPlay) {
-    const floor = (typeof s.play_start_chunk === 'number') ? s.play_start_chunk : 0;
-    if (playedThrough < floor) playedThrough = floor;
-    drainAudio(s.chunks);
+  if (autoPlay && !s.paused) {
+    audioOwner = playerClaim();
+    if (!audioOwner) {
+      stopAudioQueue();
+      $('playPos').textContent += ' · 这个标签页不出声（另一个窗口/标签页正在播）';
+    } else {
+      playerHeartbeat();
+      const floor = (typeof s.play_start_chunk === 'number') ? s.play_start_chunk : 0;
+      if (playedThrough < floor) playedThrough = floor;
+      drainAudio(s.chunks);
+    }
   }
 }
 
@@ -420,12 +549,19 @@ function render(s) {
 function setAutoPlay(on) {
   autoPlay = on;
   localStorage.setItem('airadio_autoplay', on ? '1' : '0');
-  $('playBtn').textContent = on ? '⏸ 停止自动播放' : '▶ 开始连续播放（外放）';
+  $('playBtn').textContent = on ? '⏸ 停止连续播放' : '▶ 开始连续播放（开播）';
   if (!on) { stopAudioQueue(); return; }
   armAutoplay();
 }
 async function armAutoplay() {
   if (!autoPlay) return;
+  audioOwner = playerClaim();
+  if (!audioOwner) {
+    stopAudioQueue();
+    toast('另一个窗口/标签页正在播：这个页面不再出声（避免两套声音重叠）');
+    return;
+  }
+  playerHeartbeat();
   try {
     if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     if (audioCtx.state === 'suspended') await audioCtx.resume();
@@ -438,7 +574,10 @@ async function armAutoplay() {
     render(s);
   } catch (e) { return; }
 }
-$('playBtn').onclick = () => setAutoPlay(!autoPlay);
+$('playBtn').onclick = () => {
+  if (!autoPlay && !window.__hasSession) { openStartWizard('点「开始」后这场就开播了：先填直播间号、选稿或用 AI 生成新稿、确认音色。'); return; }
+  setAutoPlay(!autoPlay);
+};
 document.addEventListener('click', () => { if (autoPlay && audioCtx && audioCtx.state === 'suspended') armAutoplay(); });
 
 /* ---------------- 播放控制 ---------------- */
@@ -520,17 +659,61 @@ $('btnUploadScript').onclick = () => act('btnUploadScript', '上传稿子', asyn
 });
 
 /* ---------------- 音色 ---------------- */
+const DEFAULT_VOICE_KEYWORD = 'male55';
+const DEFAULT_VOICE_DESC = '中年男性，55岁左右，嗓音稳重略带沙哑，低沉有质感，语速中等偏慢，语气沉稳可信，适合电台口播长时间听不累';
 let MODEL_CATALOG = [];
+let VOICE_LIST = [];          // 当前模型的自建音色（带生成时的提示词）
+let VOICE_CUR = {model: '', voice: '', not_running: true};
+
+function voiceShort(vid) {
+  // cosyvoice-v3.5-flash-vd-male5507-xxxxxxxx → male5507
+  const owner = (typeof modelOfVoice === 'function' ? modelOfVoice(vid) : '') || VOICE_CUR.model || '';
+  let s = vid || '';
+  if (owner && s.startsWith(owner + '-')) s = s.slice(owner.length + 1);
+  if (s.startsWith('vd-')) s = s.slice(3);
+  return s.replace(/-[0-9a-f]{16,}$/i, '');
+}
+function voiceNameOf(v) {
+  if (v.label) return v.label;
+  if (v.prompt) return v.prompt.length > 42 ? v.prompt.slice(0, 42) + '…' : v.prompt;
+  return voiceShort(v.voice_id) + '（没留提示词）';
+}
+function modelOfVoice(vid) {
+  const hit = MODEL_CATALOG.find(m => (vid || '').startsWith(m.model + '-'));
+  return hit ? hit.model : '';
+}
+function renderVoiceLine() {
+  const m = VOICE_CUR.model || '', v = VOICE_CUR.voice || '';
+  const b = $('voiceBadge'), l = $('voiceLine');
+  if (!v) {
+    b.textContent = '🎙 音色 未选'; b.className = 'badge warn';
+    l.innerHTML = '音色：<b class=warn>还没选</b> — 去「音色」页生成一个（默认方向：中年男性55岁·稳重沙哑），开播时选它';
+    return;
+  }
+  const own = modelOfVoice(v);
+  const mismatch = own && m && own !== m;
+  b.textContent = '🎙 ' + voiceShort(v); b.className = 'badge ok';
+  l.innerHTML = '当前音色：<b>' + esc(voiceShort(v)) + '</b>（' + esc(v) + '） · 模型 <b>' + esc(own || m) + '</b>'
+    + (VOICE_CUR.not_running ? ' · <span style="color:var(--dim)">电台没在跑，这是下次开播要用的</span>' : ' · 正在用')
+    + (mismatch ? ' · <b class=err>这个音色属于 ' + esc(own) + '，和上面选的 ' + esc(m) + ' 不匹配（用它会合成失败）</b>' : '');
+}
 async function loadVoiceCatalog() {
   const d = await (await api('/api/models')).json();
   MODEL_CATALOG = d.models || [];
+  VOICE_CUR = d.current || {};
   const ms = $('modelSel');
   if (!ms.options.length) {
     for (const m of MODEL_CATALOG) { const o = document.createElement('option'); o.value = m.model; o.textContent = m.label; ms.appendChild(o); }
     ms.onchange = () => fillVoiceOptions();
   }
-  ms.value = d.current.model || (MODEL_CATALOG[0] || {}).model || '';
-  fillVoiceOptions(d.current.voice);
+  ms.value = VOICE_CUR.model || d.default_model || (MODEL_CATALOG[0] || {}).model || '';
+  // 默认音色方向（翔哥）：打开就填好，直接点「按提示词生成」就行
+  const vp = $('voicePrompt');
+  if (vp && !vp.value.trim()) vp.value = DEFAULT_VOICE_DESC;
+  const vk = $('voicePrefix');
+  if (vk && !vk.value.trim()) vk.value = DEFAULT_VOICE_KEYWORD;
+  fillVoiceOptions(VOICE_CUR.voice);
+  renderVoiceLine();
 }
 function fillVoiceOptions(keep) {
   const model = $('modelSel').value;
@@ -548,19 +731,94 @@ function fillVoiceOptions(keep) {
 async function loadClonedVoices(model, keep) {
   try {
     const d = await (await api('/api/voices?model=' + encodeURIComponent(model))).json();
+    VOICE_LIST = d.voices || [];
     const vs = $('voiceSel'); const first = vs.querySelector('option');
-    for (const v of (d.voices || [])) {
-      if ((v.voice_id || '').length < 4) continue;
+    for (const v of VOICE_LIST) {
       const o = document.createElement('option'); o.value = v.voice_id;
-      o.textContent = '🎙 自建 ' + v.voice_id + (v.status && v.status !== 'READY' ? '（' + v.status + '）' : '');
+      o.textContent = '🎙 ' + voiceNameOf(v) + ' [' + voiceShort(v.voice_id) + ']'
+        + (v.status && v.status !== 'OK' && v.status !== 'READY' ? '（' + v.status + '）' : '');
       vs.insertBefore(o, first);
     }
-    if (keep) vs.value = keep;
-  } catch (e) {}
+    if (keep) {
+      vs.value = keep;
+      if (vs.value !== keep) {   // 这个音色不属于当前模型：明确提示，别让下拉框静默选空
+        const own = modelOfVoice(keep);
+        const o = document.createElement('option'); o.value = keep;
+        o.textContent = '🎙 ' + voiceShort(keep) + '（属于 ' + (own || '别的模型') + '，不能用在 ' + model + '）';
+        vs.insertBefore(o, first); vs.value = keep;
+      }
+    }
+    renderVoiceList(model, d.key_set !== false);
+  } catch (e) { renderVoiceList(model, false); }
 }
-$('btnSaveVoice').onclick = () => act('btnSaveVoice', '保存音色', async () => {
-  await postJSON('/api/params', {model: $('modelSel').value, voice: $('voiceSel').value, rate: parseFloat($('rateInput').value)});
-  getState(); return '模型/音色/语速已保存（换音色会让旧音频缓存失效，按需重新合成）';
+function renderVoiceList(model, hasKey) {
+  const box = $('voiceList');
+  if (!hasKey) {
+    box.innerHTML = '<div style="color:var(--dim);font-size:13px;padding:8px 0">上面没填百炼 API Key，列不出音色（Key 留空时服务器 .env 里有也算）。</div>';
+    return;
+  }
+  if (!VOICE_LIST.length) {
+    box.innerHTML = '<div style="color:var(--dim);font-size:13px;padding:8px 0">' + esc(model) + ' 下还没有自建音色：用上面「按提示词生成」建一个（默认音色方向已填好：中年男性55岁·稳重沙哑）。</div>';
+    return;
+  }
+  box.innerHTML = VOICE_LIST.map(v => {
+    const nm = voiceNameOf(v);
+    const tag = v.mode === 'clone' ? '录音复刻' : '提示词生成';
+    return `<div class="srow" data-vid="${esc(v.voice_id)}"><div class="stitle">${esc(nm)}`
+      + `<div class="smeta">${esc(voiceShort(v.voice_id))} · ${tag} · ${esc(v.created || '')}${v.status && v.status !== 'OK' ? ' · ' + esc(v.status) : ''}</div>`
+      + (v.prompt && v.prompt !== nm ? `<div class="smeta">提示词：${esc(v.prompt)}</div>` : '')
+      + `</div>`
+      + `<button class="ghost" data-play="${esc(v.voice_id)}">试听</button>`
+      + `<button data-use="${esc(v.voice_id)}">用它播</button>`
+      + (v.mine ? `<button class="ghost" data-rename="${esc(v.voice_id)}">改名</button>` : '')
+      + `<button class="danger" data-del="${esc(v.voice_id)}">删除</button>`
+      + (v.mine ? '' : '<span class="smeta" style="align-self:center">非本页生成</span>')
+      + `</div>`;
+  }).join('');
+  for (const b of box.querySelectorAll('button')) {
+    if (b.dataset.play) b.onclick = () => act(null, '试听音色', async () => {
+      const r = await api('/api/voice_preview', {voice: b.dataset.play, model, text: $('ttsTestInput').value.trim() || '试听：这是新的音色，欢迎来到直播间。'});
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || '试听失败'); }
+      const blob = await r.blob(); new Audio(URL.createObjectURL(blob)).play();
+      return '已用 ' + voiceShort(b.dataset.play) + ' 试听';
+    });
+    if (b.dataset.use) b.onclick = () => act(null, '用它播', async () => {
+      const d = await postJSON('/api/voice_default', {model, voice: b.dataset.use});
+      stopAudioQueue(); await loadVoiceCatalog(); getState();
+      return '已设为当前音色（' + voiceShort(d.voice) + ' · ' + d.model + '）';
+    });
+    if (b.dataset.rename) b.onclick = () => act(null, '改名', async () => {
+      const label = prompt('给这个音色起个名字（列表里显示它）', voiceShort(b.dataset.rename));
+      if (label == null) throw new Error('取消');
+      await postJSON('/api/voice_label', {voice_id: b.dataset.rename, label});
+      await loadVoiceCatalog(); return '已改名';
+    });
+    if (b.dataset.del) b.onclick = () => act(null, '删除音色', async () => {
+      const mine = (VOICE_LIST.find(v => v.voice_id === b.dataset.del) || {}).mine;
+      if (!confirm('删除音色 ' + voiceShort(b.dataset.del) + ' ？百炼那边也删掉，删了不能恢复。')) throw new Error('取消');
+      let d = await postJSON('/api/voice_delete', {voice_id: b.dataset.del});
+      if (d.need_confirm) {   // 不是这个页面生成的：再确认一次才真删
+        if (!confirm('这个音色不是这个页面生成的（可能在百炼后台做的）。确定要连百炼那边一起删？')) throw new Error('取消');
+        d = await postJSON('/api/voice_delete', {voice_id: b.dataset.del, force: true});
+      }
+      await loadVoiceCatalog(); getState(); return d.note || d.error || '已删除';
+    });
+  }
+}
+$('btnVoiceRefresh').onclick = () => act('btnVoiceRefresh', '刷新音色', async () => { await loadVoiceCatalog(); return '已刷新（' + VOICE_LIST.length + ' 个自建音色）'; });
+$('btnSaveVoice').onclick = () => act('btnSaveVoice', '设为当前音色', async () => {
+  const payload = {model: $('modelSel').value, voice: $('voiceSel').value};
+  const rate = parseFloat($('rateInput').value);
+  if (!payload.voice) {   // 没在播时也要能只存模型+语速
+    const info = MODEL_CATALOG.find(m => m.model === payload.model) || {};
+    if (!(info.system_voices || []).length) throw new Error(payload.model + ' 没有系统音色：先生成一个音色再保存，或改用 cosyvoice-v2 / v3-flash');
+    await postJSON('/api/params', {model: payload.model, rate});
+    await loadVoiceCatalog(); getState(); return '已保存模型/语速（音色待定：开播时生成或选现成的）';
+  }
+  await postJSON('/api/voice_default', payload);
+  await postJSON('/api/params', {rate});
+  stopAudioQueue(); await loadVoiceCatalog(); getState();
+  return '已设为当前音色（在播立即生效；旧音色的音频已全部作废重生成）';
 });
 $('btnApiKey').onclick = () => act('btnApiKey', '保存 Key', async () => {
   const key = $('apiKeyInput').value.trim(); if (!key) throw new Error('Key 不能为空');
@@ -616,17 +874,29 @@ $('voiceFile').onchange = () => {
 async function applyCloneResult(d) {
   await loadVoiceCatalog();
   $('voiceSel').value = d.voice_id;
+  $('modelSel').value = d.target_model;
+  const label = d.label || voiceShort(d.voice_id);
+  // 生成时百炼已带一段样例音，先播它（不额外花钱），再自动设为当前音色
   try {
-    const r = await api('/api/preview_voice', {voice: d.voice_id, model: d.target_model,
-      text: $('voicePreview').value.trim() || '大家好，这是新的音色，欢迎来到直播间。'});
-    if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
+    if (d.preview_audio) {
+      const raw = atob(d.preview_audio); let bin = ''; const u = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) u[i] = raw.charCodeAt(i);
+      new Audio(URL.createObjectURL(new Blob([u], {type: 'audio/wav'}))).play();
+    } else {
+      const r = await api('/api/voice_preview', {voice: d.voice_id, model: d.target_model,
+        text: $('voicePreview').value.trim() || '大家好，这是新的音色，欢迎来到直播间。'});
+      if (r.ok) { const b = await r.blob(); new Audio(URL.createObjectURL(b)).play(); }
+    }
   } catch (e) {}
-  $('cloneHint').textContent = '新音色已生成并选中（' + d.target_model + '）：' + d.voice_id + '　→ 点上面「保存模型/语速」立刻用它播稿';
+  try { await postJSON('/api/voice_default', {model: d.target_model, voice: d.voice_id}); } catch (e) {}
+  await loadVoiceCatalog(); getState();
+  $('cloneHint').innerHTML = '<b class=ok>新音色已生成：' + esc(label) + '</b>（' + esc(d.target_model) + '）<br>'
+    + esc(d.voice_id) + '<br>已设为当前音色，' + (window.__hasSession ? '正在用它播稿' : '下次开播就用它') + '。想换回别的去下面「我生成的音色」列表点「用它播」。';
 }
 $('btnClone').onclick = () => act('btnClone', '生成音色', async () => {
   const prefix = ($('voicePrefix').value.trim() || 'v' + Date.now().toString(36).slice(-6)).toLowerCase();
   if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位');
-  let payload = {prefix};
+  let payload = {prefix, target_model: $('modelSel').value, label: $('voiceLabel') ? $('voiceLabel').value.trim() : ''};
   if (window._recB64) { payload.audio_base64 = window._recB64; payload.format = window._recFmt; }
   else if (window._recBlob && window._recBlob.size) {
     const buf = await window._recBlob.arrayBuffer(); let bin = ''; const u = new Uint8Array(buf);
@@ -634,18 +904,103 @@ $('btnClone').onclick = () => act('btnClone', '生成音色', async () => {
     payload.audio_base64 = btoa(bin); payload.format = window._recFmt || 'webm';
   } else throw new Error('先录音或选择音频文件（安静环境连续说 10–20 秒）');
   $('cloneHint').textContent = '生成中…（会先本地检查录音时长）';
-  const d = await postJSON('/api/clone_voice', payload);
+  const d = await postJSON('/api/voice_save', payload);
   await applyCloneResult(d); return '录音音色已生成，已选中并试听';
 });
 $('btnDesignVoice').onclick = () => act('btnDesignVoice', '生成音色', async () => {
   const prompt = $('voicePrompt').value.trim();
   if (prompt.length < 5) throw new Error('先写音色描述（性别/年龄/语气/用途）');
-  const prefix = ($('voicePrefix').value.trim() || 'vd' + Date.now().toString(36).slice(-6)).toLowerCase();
+  const prefix = ($('voicePrefix').value.trim() || DEFAULT_VOICE_KEYWORD).toLowerCase();
   if (!/^[a-z0-9]{1,9}$/.test(prefix)) throw new Error('音色名要用英文小写字母数字，少于 10 位');
-  $('cloneHint').textContent = '按提示词生成中…';
-  const d = await postJSON('/api/clone_voice', {prefix, prompt, preview_text: $('voicePreview').value.trim()});
+  $('cloneHint').textContent = '按提示词生成中…（约 10–40 秒）';
+  const d = await postJSON('/api/voice_save', {prefix, prompt, target_model: $('modelSel').value,
+    preview_text: $('voicePreview').value.trim(),
+    label: ($('voiceLabel') ? $('voiceLabel').value.trim() : '')});
   await applyCloneResult(d); return '提示词音色已生成，已选中并试听';
 });
+
+/* ---------------- AI生成 ---------------- */
+$('btnLocalLlm').onclick = () => act('btnLocalLlm', '找本机模型', async () => {
+  const d = await (await api('/api/local_llm')).json();
+  if (!d.ok) { $('localLlmBadge').textContent = '本机模型 没找到'; throw new Error('这台电脑/局域网里没找到在跑的 OpenAI 兼容模型（默认找 127.0.0.1:8080 和 172.18.0.1:8080；也可以在 API 地址里自己填）'); }
+  $('genBackend').value = 'openai';
+  $('genBaseUrl').value = d.base_url;
+  $('genModel').value = d.models[0];
+  $('genApiKey').value = '';
+  const saved = await postJSON('/api/gen_cfg_save', {
+    backend: 'openai', model: d.models[0], base_url: d.base_url, lines: parseInt($('genLines').value) || 40,
+    prompt: $('genPrompt').value.trim(), auto_generate: $('genAutoChk').checked,
+    auto_generate_at: (parseInt($('genAt').value) || 50) / 100});
+  $('localLlmBadge').textContent = '本机模型 ' + d.models[0];
+  await loadGenCfg();
+  return '已切到本机模型 ' + d.models[0] + '（' + d.base_url + '）：生成直播稿不花百炼额度';
+});
+
+async function loadGenCfg() {
+  try { GEN_CFG = await (await api('/api/gen_cfg')).json(); } catch (e) { return; }
+  const c = GEN_CFG.gen_cfg || {};
+  if (c.backend) $('genBackend').value = c.backend;
+  if (c.model) $('genModel').value = c.model; else if (GEN_CFG.default_model) $('genModel').placeholder = '默认 ' + GEN_CFG.default_model;
+  if (c.base_url) $('genBaseUrl').value = c.base_url;
+  if (c.lines) $('genLines').value = c.lines;
+  if (c.auto_generate_at) $('genAt').value = Math.round(c.auto_generate_at * 100);
+  $('genAutoChk').checked = c.auto_generate !== false;
+  if (c.prompt) $('genPrompt').value = c.prompt; else $('genPrompt').placeholder = (GEN_CFG.default_prompt || '').slice(0, 120) + '…（留空用内置框架）';
+  $('genCfgHint').textContent = (c.api_key ? '文本模型 Key 已保存。' : '文本模型 Key 留空时沿用播音的百炼 Key。')
+    + (c.auto_generate === false ? ' 当前自动生成是关的。' : '');
+  renderGenTemplates();
+}
+function renderGenTemplates() {
+  $('genTplList').innerHTML = (GEN_CFG.gen_templates || []).map(t =>
+    `<div class="srow"><div class="stitle">${esc(t.title)}<div class="smeta">${t.text.length} 字</div></div>` +
+    `<button class="ghost" data-tpl="${t.id}">载入编辑</button><button class="ghost" data-tpldel="${t.id}">删</button></div>`
+  ).join('') || '<div style="color:var(--dim);font-size:13px;padding:8px 0">还没有保存的框架提示词：写好一套后点「保存提示词」，开播时可选它现生成。</div>';
+  for (const b of $('genTplList').querySelectorAll('button')) {
+    if (b.dataset.tpl) b.onclick = () => act(null, '载入框架', async () => {
+      const t = GEN_CFG.gen_templates.find(x => x.id === b.dataset.tpl);
+      $('genPrompt').value = t.text; $('genTplTitle').value = t.title;
+      return '已载入「' + t.title + '」到编辑框';
+    });
+    if (b.dataset.tpldel) b.onclick = () => act(null, '删除框架', async () => {
+      await postJSON('/api/gen_template_delete', {id: b.dataset.tpldel}); await loadGenCfg(); return '已删除该框架';
+    });
+  }
+}
+$('btnSaveTpl').onclick = () => act('btnSaveTpl', '保存提示词', async () => {
+  const text = $('genPrompt').value.trim(); if (!text) throw new Error('提示词框是空的');
+  const d = await postJSON('/api/gen_template_save', {title: $('genTplTitle').value.trim() || '未命名框架', text});
+  await loadGenCfg(); return '已保存框架「' + d.title + '」，开播向导里可选它';
+});
+$('btnSaveGenCfg').onclick = () => act('btnSaveGenCfg', '保存生成配置', async () => {
+  const body = {
+    backend: $('genBackend').value,
+    model: $('genModel').value.trim(),
+    base_url: $('genBaseUrl').value.trim(),
+    prompt: $('genPrompt').value.trim(),
+    lines: parseInt($('genLines').value),
+    auto_generate: $('genAutoChk').checked,
+    auto_generate_at: (parseInt($('genAt').value) || 50) / 100,
+  };
+  const key = $('genApiKey').value.trim(); if (key) body.api_key = key;
+  for (const k of ['lines']) if (!isFinite(body[k])) delete body[k];
+  const d = await postJSON('/api/gen_cfg_save', body);
+  $('genApiKey').value = '';
+  await loadGenCfg(); await getState();
+  return '生成配置已保存' + (d.note ? '（' + d.note + '）' : '，正在跑的电台已同步生效');
+});
+async function genNow(applyNow) {
+  const body = {apply_now: applyNow};
+  const prompt = $('genPrompt').value.trim(); if (prompt) body.prompt = prompt;
+  const d = await postJSON('/api/generate_now', body);
+  $('genHint').textContent = '已生成「' + d.title + '」：' + d.lines + ' 行（模型 ' + d.model + '）'
+    + (d.applied ? '，已从头播放（这套稿只用一次）。' : '，已放进编辑框可先检查。');
+  if (d.applied) { stopAudioQueue(); playedThrough = 0; setAutoPlay(true); }
+  else { $('scriptBox').value = d.text; $('libTitle').value = d.title; showTab('script'); }
+  getState();
+  return '新稿已生成（' + d.lines + ' 行）' + (d.applied ? '并开始播放' : '，在「稿子」页等你确认');
+}
+$('btnGenNow').onclick = () => act('btnGenNow', '生成新稿', () => genNow(true));
+$('btnGenPreview').onclick = () => act('btnGenPreview', '生成不播', () => genNow(false));
 
 /* ---------------- 话术 ---------------- */
 const PHRASE_KINDS = [['gift','礼物'],['chat','弹幕'],['badge','灯牌/粉丝团'],['follow','关注'],['member','进场'],['like','点赞']];
@@ -766,19 +1121,57 @@ $('btnChangePw').onclick = () => act('btnChangePw', '改密码', async () => {
 $('btnReloadLog').onclick = () => act('btnReloadLog', '刷新日志', async () => { logBuf = []; logCursor = 0; getState(); return '已重新拉取日志'; });
 
 /* ---------------- 开播向导 ---------------- */
+let GEN_CFG = {gen_templates: [], default_voice_desc: ''};
 function fillStartScriptOptions() {
   const sel = $('startScript'); sel.innerHTML = '';
-  const o0 = document.createElement('option'); o0.value = '__default__'; o0.textContent = '默认稿（服务端准备的这套）'; sel.appendChild(o0);
+  const o0 = document.createElement('option'); o0.value = '__default__'; o0.textContent = '默认稿（上一场/服务器准备的这套）'; sel.appendChild(o0);
   for (const s of (libCache.scripts || [])) { const o = document.createElement('option'); o.value = s.id; o.textContent = s.title + '（' + s.sentences + ' 段）'; sel.appendChild(o); }
   const o1 = document.createElement('option'); o1.value = '__paste__'; o1.textContent = '粘贴新稿'; sel.appendChild(o1);
   sel.onchange = () => { $('startPasteWrap').style.display = sel.value === '__paste__' ? 'block' : 'none'; };
+  const gs = $('startGenTpl'); gs.innerHTML = '';
+  const g0 = document.createElement('option'); g0.value = ''; g0.textContent = '（用「AI生成」页当前的提示词）'; gs.appendChild(g0);
+  for (const t of (GEN_CFG.gen_templates || [])) { const o = document.createElement('option'); o.value = t.id; o.textContent = t.title; gs.appendChild(o); }
+  if (!$('startVoiceDesc').value) $('startVoiceDesc').value = GEN_CFG.default_voice_desc || '';
 }
 function openStartWizard(msg) {
   $('startHint').textContent = msg || '';
   $('startRoom').value = $('roomInput').dataset.room || localStorage.getItem('airadio_room') || '';
   fillStartScriptOptions();
+  fillStartVoiceOptions();
   $('startModal').classList.add('on');
 }
+async function fillStartVoiceOptions() {
+  const sm = $('startVoiceModel');
+  if (sm && !sm.options.length) {
+    if (!MODEL_CATALOG.length) { try { await loadVoiceCatalog(); } catch (e) {} }
+    for (const m of MODEL_CATALOG) { const o = document.createElement('option'); o.value = m.model; o.textContent = m.label; sm.appendChild(o); }
+  }
+  // 生成新音色的模型：默认 cosyvoice-v3.5-flash（翔哥指定）
+  if (sm) {
+    const want = 'cosyvoice-v3.5-flash';
+    if (![...sm.options].some(o => o.value === want)) { const o = document.createElement('option'); o.value = want; o.textContent = want + '（默认·只能用自建音色）'; sm.insertBefore(o, sm.firstChild); }
+    sm.value = want;
+  }
+  // 「直接用已生成的音色」：列出当前模型下我生成过的音色
+  const pick = $('startVoicePick'); const model = sm ? sm.value : '';
+  pick.innerHTML = '';
+  const o0 = document.createElement('option'); o0.value = ''; o0.textContent = '（不用：按上面的关键字生成一个新的）'; pick.appendChild(o0);
+  try {
+    const d = await (await api('/api/voices?model=' + encodeURIComponent(model))).json();
+    for (const v of (d.voices || [])) {
+      const o = document.createElement('option'); o.value = v.voice_id;
+      o.textContent = '🎙 ' + voiceNameOf(v) + ' [' + voiceShort(v.voice_id) + ']'
+        + (v.status && v.status !== 'OK' ? '（' + v.status + '）' : '');
+      pick.appendChild(o);
+    }
+    if (VOICE_CUR.voice && ![...pick.options].some(o => o.value === VOICE_CUR.voice)) {
+      const o = document.createElement('option'); o.value = VOICE_CUR.voice;
+      o.textContent = '🎙 ' + voiceShort(VOICE_CUR.voice) + '（上次用的）'; pick.insertBefore(o, pick.options[1] || null);
+    }
+  } catch (e) {}
+}
+$('startVoiceModel').onchange = () => fillStartVoiceOptions();
+$('btnStartVoiceRefresh').onclick = () => act('btnStartVoiceRefresh', '刷新音色', async () => { await fillStartVoiceOptions(); return '已刷新（' + ($('startVoicePick').options.length - 1) + ' 个可用音色）'; });
 function closeStartWizard() { $('startModal').classList.remove('on'); }
 $('btnStart').onclick = () => openStartWizard();
 $('btnStartCancel').onclick = closeStartWizard;
@@ -786,21 +1179,34 @@ async function startShow(skipVoice) {
   const room = $('startRoom').value.trim();
   if (!room) throw new Error('要填直播间号');
   const sel = $('startScript').value;
-  const payload = {room, skip_voice: skipVoice};
+  const payload = {room, skip_voice: skipVoice,
+                   auto_generate: $('startAutoGenChk').checked};
   if (sel === '__paste__') { payload.text = $('startPaste').value; payload.title = '粘贴稿 ' + new Date().toLocaleDateString(); }
   else if (sel !== '__default__') { const s = libCache.scripts.find(x => x.id === sel); if (s) { payload.text = s.text; payload.title = s.title; } }
-  if (!skipVoice) {
-    payload.voice_keyword = $('startVoiceKey').value.trim().toLowerCase();
-    payload.voice_prompt = $('startVoiceDesc').value.trim();
-    payload.model = $('modelSel').value;
+  if ($('startGenChk').checked) {
+    payload.generate_script = true;
+    const tid = $('startGenTpl').value;
+    if (tid) { const t = (GEN_CFG.gen_templates || []).find(x => x.id === tid); if (t) payload.gen_template = t.text; }
+    else payload.gen_template = $('genPrompt').value.trim();
+    payload.title = '';
   }
+  if (!skipVoice) {
+    payload.voice_keyword = ($('startVoiceKey').value.trim() || 'male55').toLowerCase();
+    payload.voice_prompt = $('startVoiceDesc').value.trim();
+    payload.model = $('startVoiceModel').value;   // 生成新音色用哪个模型（默认 cosyvoice-v3.5-flash）
+  }
+  const picked = ($('startVoicePick') && $('startVoicePick').value) || '';
+  if (picked) payload.voice_id = picked;          // 开播直接用已生成的音色
   stopAudioQueue(); setAutoPlay(false);
+  try { localStorage.setItem(PLAYER_KEY, JSON.stringify({tab: TAB_ID, at: Date.now()})); } catch (e) {}   // 开播的这个标签页接管播放
   const d = await postJSON('/api/start', payload);
   closeStartWizard();
   localStorage.setItem('airadio_room', room);
   epochSeen = null; playedThrough = 0; logBuf = []; logCursor = 0;
   await loadVoiceCatalog(); await getState();
-  toast('已开始：房间 ' + room + '，' + d.sentences + ' 段' + (d.skipped_voice ? '（沿用现有音色）' : '，新音色 ' + d.voice_id));
+  toast('已开始：房间 ' + room + '，' + d.sentences + ' 段'
+    + (d.generated_script ? '，AI新稿「' + d.title + '」' : '')
+    + '，音色 ' + voiceShort(d.voice_id) + '（' + d.model + '）');
   setAutoPlay(true);
 }
 $('btnStartGo').onclick = () => act('btnStartGo', '开始新直播', () => startShow(false));
@@ -811,19 +1217,21 @@ $('btnStartSkip').onclick = () => act('btnStartSkip', '开始新直播', () => s
   let me;
   try { me = await (await api('/me')).json(); } catch (e) { return; }
   if (!me.ok) { gotoLogin(); return; }
-  $('whoBadge').textContent = '👤 ' + me.username + (me.role === 'admin' ? '（管理员）' : '');
+  $('whoBadge').textContent = me.local ? '💻 本机单机版' : ('👤 ' + me.username + (me.role === 'admin' ? '（管理员）' : ''));
   $('whoBadge').className = 'badge ok';
+  if (me.local) $('btnLogout').style.display = 'none';    // 单机版没有登录，没有"退出"
   if (me.role === 'admin') { const b = document.createElement('button'); b.className='ghost'; b.style.cssText='min-height:34px;padding:0 10px;font-size:13px'; b.textContent='管理后台'; b.onclick=()=>location.href='/admin'; $('btnStart').after(b); }
-  // 这一场可能已经被自动停止了（页面关过一次）：410 时不读参数，直接引导重新开始
+  // 这一场可能已经被停止了：410 时不读参数；**不自动弹开播窗**——要开播由你点「开始连续播放」
   let s0 = null;
   try {
     const r = await api('/api/state');
-    if (r.status === 410) { const d = await r.json().catch(() => ({})); openStartWizard(d.error || '这一场已经停止了，重新开始就点下面的按钮'); }
+    if (r.status === 410) { $('status').innerHTML = '<b class=warn>这套电台没在跑</b> — 先在选项卡里配好参数/模型/提示词，再点最下面「开始连续播放」开播'; }
     else if (r.ok) s0 = await r.json();
-    else { openStartWizard('先开始一场直播：填直播间号、选稿、决定这一场的音色。'); }
-  } catch (e) { openStartWizard(); }
+  } catch (e) { $('status').textContent = '服务连接中断，重试中…'; }
   if (s0) {
-    if (s0.session) $('sessionInfo').textContent = '这台设备空闲 ' + s0.session.idle_stop_s + ' 秒后电台会自动停止；当前同时在线 ' + s0.session.online_users + ' 人。';
+    if (s0.session) $('sessionInfo').textContent = s0.session.idle_stop_s
+      ? ('这台设备空闲 ' + s0.session.idle_stop_s + ' 秒后电台会自动停止；当前同时在线 ' + s0.session.online_users + ' 人。')
+      : '单机版：关掉这个页面电台也不会停，只有你点「停止」才停。';
     const p = s0.params || {};
     $('rateInput').value = p.rate; $('minGapInput').value = p.min_gap;
     $('windowInput').value = (p.window || []).join(',');
@@ -840,14 +1248,13 @@ $('btnStartSkip').onclick = () => act('btnStartSkip', '开始新直播', () => s
       const v = (p.per_kind_windows || {})[k]; if (v) $('kw_'+k).value = v.join(',');
     }
     $('apiKeyHint').textContent = s0.api_key_set ? '' : '还没填百炼 API Key：在上面输入框填 sk-… 即可开始合成（不需要 .env）。';
-    if (!s0.chunks) openStartWizard('这一场还没开始：填直播间号、选稿、决定这一场的音色。');
   } else {
     $('idleS').textContent = me.idle_stop_s || 90; $('idleS2').textContent = $('idleS').textContent;
     loadVoiceCatalog().catch(() => {});
   }
-  // 刷新后恢复自动播放：按钮状态先恢复到"停止自动播放"，出声要等浏览器给一次用户手势
-  if (autoPlay) { $('playBtn').textContent = '⏸ 停止自动播放'; armAutoplay().catch(() => {}); }
-  loadPhrases().catch(() => {}); loadLibrary().catch(() => {}); loadCookie().catch(() => {});
+  // 刷新后恢复自动播放：按钮状态先恢复到"停止连续播放"，出声要等浏览器给一次用户手势
+  if (autoPlay) { $('playBtn').textContent = '⏸ 停止连续播放'; armAutoplay().catch(() => {}); }
+  loadPhrases().catch(() => {}); loadLibrary().catch(() => {}); loadCookie().catch(() => {}); loadGenCfg().catch(() => {});
   setInterval(getState, 2000);
   getState();
 })();

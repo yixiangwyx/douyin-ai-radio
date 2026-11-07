@@ -95,15 +95,33 @@ class Orchestrator:
         self.cache_size_peak = 0
         self.disk_cache_hits = 0      # 命中上一次进程（重启前）生成的音频
         self.disk_cache_writes = 0
+        # ---------- AI 新稿接播（没有多稿轮换时用它接播） ----------
+        # script_feeder: callable() -> {"title","text"} | None —— 取后台已经生成好的下一稿
+        # auto_gen_hook: callable() —— 当前稿播到 auto_gen_at 时被调用，去后台生成下一稿
+        self.script_feeder = None
+        self.auto_gen_hook = None
+        self.gen_queue_depth = None      # callable() -> int，控制台注入（给前端显示队列深度）
+        self.gen_busy = None             # callable() -> bool：后台是否正在生成下一稿
+        self.auto_feed_enabled = True    # 关掉就退回"整稿播完从头循环"
+        self.auto_gen_at = 0.5           # 当前稿播到这个比例就触发后台生成新稿
+        self._auto_gen_fired = False
+        self._script_is_one_shot = False  # AI 稿只用一次，用完不保留
+        self.played_titles: list[str] = []  # 本场播过的稿名（生成时告诉模型别重复）
+        self.generating = False
+        self.last_gen_error = ""
 
     # ---------- 控制 API（供 web 控制台 / CLI 调用） ----------
 
     def pause(self):
         self._pause.set()
         self._wake.set()   # 立刻结束当前节拍，不用等这一段播完
+        # 暂停时把播放位置标成"新起点"：前端据此清掉已经排好的音频队列
+        # （不这么做：暂停前排好的那些块会继续播完，听起来像换了个音色还在播）
+        self._mark_playback_reset("pause")
 
     def resume(self):
         self._pause.clear()
+        self._mark_playback_reset("resume")
 
     # ---------- 播放代次：跳句/从头重播/换稿都要让当前节拍立刻结束 ----------
     def _mark_playback_reset(self, why: str):
@@ -190,6 +208,83 @@ class Orchestrator:
         self.log_append("script: 新稿已生效")
         return True
 
+    def set_ai_feed(self, *, feeder=None, gen_hook=None, queue_depth=None,
+                    enabled: bool | None = None, at: float | None = None) -> None:
+        """接上「AI 生成新稿」这条链：
+        feeder()      取已经生成好的下一稿（没有返回 None）
+        gen_hook()    当前稿播到 at 比例时调用，负责后台生成下一稿
+        queue_depth() 队列里还有几稿（给前端显示）
+        at            触发生成的进度（0.5 = 讲到一半）
+        """
+        if feeder is not None:
+            self.script_feeder = feeder
+        if gen_hook is not None:
+            self.auto_gen_hook = gen_hook
+        if queue_depth is not None:
+            self.gen_queue_depth = queue_depth
+        if enabled is not None:
+            self.auto_feed_enabled = bool(enabled)
+        if at is not None:
+            self.auto_gen_at = max(0.05, min(0.95, float(at)))
+        self.log_append(f"ai_gen: 接播{'开' if self.auto_feed_enabled else '关'}"
+                        f"（播到 {int(self.auto_gen_at * 100)}% 触发后台生成下一稿）")
+
+    def _script_progress(self) -> float:
+        total = sum(1 for s in self.segments if s.kind in ("speech", "mark"))
+        if total <= 0:
+            return 1.0
+        return min(1.0, self._seg_i / total)
+
+    def _maybe_autogen(self) -> None:
+        """讲到一半就让后台去生成下一稿（一次稿只触发一次，播完换新稿后重置）。"""
+        if self._auto_gen_fired or not self.auto_gen_hook:
+            return
+        if not self.auto_feed_enabled:
+            return
+        if self._script_progress() < self.auto_gen_at:
+            return
+        self._auto_gen_fired = True
+        try:
+            self.auto_gen_hook()
+        except Exception as e:
+            self.last_gen_error = f"{type(e).__name__}: {e}"
+            self.log_append(f"ai_gen: 后台生成请求失败 {self.last_gen_error}")
+
+    def _next_generated_script(self) -> bool:
+        """从后台取一套已经生成好的新稿接上；没有就用完即弃、返回 False（AI 稿不留存）。"""
+        if not self.auto_feed_enabled or not self.script_feeder:
+            return False
+        try:
+            item = self.script_feeder()
+        except Exception:
+            return False
+        if not item or not (item.get("text") or "").strip():
+            return False
+        try:
+            segs = parse_script(item["text"])
+        except Exception:
+            return False
+        if not any(s.kind == "speech" for s in segs):
+            return False
+        with self._lock:
+            self.script_text = item["text"]
+            self.segments = segs
+            self.script_title = item.get("title", "AI新稿")
+        self._script_is_one_shot = True
+        self._seg_i = 0
+        self._script_started_at = time.time()
+        self._lines_played = 0
+        self._last_line_no = None
+        self._rotate_due = False
+        self._auto_gen_fired = False
+        self._mark_playback_reset("ai_script")
+        if self.script_title not in self.played_titles:
+            self.played_titles.append(self.script_title)
+            self.played_titles = self.played_titles[-12:]
+        self.log_append(f"ai_gen: 接播新稿「{self.script_title}」（只用一次，用完即弃）")
+        self._prefetch_ahead(0)
+        return True
+
     def _maybe_rotate(self) -> bool:
         """轮换开着头就切到稿子库的下一套稿；返回是否切了。"""
         if not self.rotate_enabled or not self.script_source:
@@ -225,6 +320,8 @@ class Orchestrator:
         self._mark_playback_reset("rotate")
         self.log_append(f"rotate: 已切到下一套稿「{self.script_title}」")
         self._prefetch_ahead(0)
+        self._auto_gen_fired = False      # 轮换稿也允许中途生成下一稿
+        self._script_is_one_shot = False
         return True
 
     def set_rotate(self, enabled: bool, source=None, idx: int | None = None,
@@ -352,7 +449,12 @@ class Orchestrator:
             self.tts = TTSStreamer(api_key=self.api_key, model=self.model,
                                    voice=self.voice, speech_rate=self.speech_rate,
                                    on_audio=self._on_audio)
-            self.log_append(f"params: model={self.model} voice={self.voice} rate={self.speech_rate}")
+            # 换模型/音色/语速后旧音频一律不能用：清内存缓存，并让播放端重定位，
+            # 否则浏览器里已经排好的块（旧音色）会继续播 —— 看起来就是"暂停了还有别的音色在播"
+            with self._tts_lock:
+                self._tts_cache.clear()
+            self._mark_playback_reset("voice")
+            self.log_append(f"params: model={self.model} voice={self.voice} rate={self.speech_rate}（旧音色音频已全部作废）")
         self.log_append(f"params: min_gap={cfg.min_gap_s}s window={cfg.window_s}")
 
     def has_api_key(self) -> bool:
@@ -421,7 +523,7 @@ class Orchestrator:
             if self._cache_hit(prefix + self._group_cache_key(idxs)):
                 ready_sents += len(idxs)
                 ready_groups += 1
-        return {
+        out = {
             "status": self.status,
             "room": {
                 "web_rid": self.collector.web_rid,
@@ -497,6 +599,14 @@ class Orchestrator:
                           (self.tts_init_error or ("(dry 模式，未合成)" if self.sink_name == "dry" else ""))),
             "api_key_set": self.has_api_key(),
         }
+        # AI 生成链没接上（没开播/没配生成）就不占轮询字节
+        if (self.script_feeder or self.auto_gen_hook or self._script_is_one_shot
+                or self.generating or self.last_gen_error):
+            out["ai_gen"] = {"busy": bool(self.generating or (self.gen_busy and self.gen_busy())),
+                             "q": (self.gen_queue_depth() if self.gen_queue_depth else 0),
+                             "one": self._script_is_one_shot,
+                             "err": self.last_gen_error}
+        return out
 
     def log_append(self, line: str):
         self.log.append(f"[{time.strftime('%H:%M:%S')}] {line}")
@@ -541,9 +651,23 @@ class Orchestrator:
                 if self._pending_script is not None:  # 下一轮开头生效
                     self.apply_pending_script()
                 elif self._seg_i >= len(self.segments):
-                    # 整轮自然播完：轮换开着头就切下一套稿，否则从头循环（音频走缓存）
-                    if not self._maybe_rotate():
-                        self._seg_i = 0  # 整轮自然播完 → 从头循环（音频走缓存，不再请求TTS）
+                    # 整轮自然播完：轮换 > AI新稿接播 > 从头循环（音频走缓存）
+                    if not self._maybe_rotate() and not self._next_generated_script():
+                        if self.auto_feed_enabled and self.auto_gen_hook:
+                            # 用完的稿不重播：再试一次生成，并在稿边界最多等 150 秒
+                            self._auto_gen_fired = False
+                            self._maybe_autogen()
+                            deadline = time.time() + 150.0
+                            while self.gen_busy and self.gen_busy() and time.time() < deadline:
+                                if not self._sleep(2.0):
+                                    break
+                                if self._next_generated_script():
+                                    break
+                        if self._seg_i >= len(self.segments):
+                            if self._script_is_one_shot:
+                                self.log_append("ai_gen: AI稿已用完且不重播（新稿没生成出来时暂回从头循环）")
+                                self._script_is_one_shot = False
+                            self._seg_i = 0  # 从头循环（音频走缓存，不再请求TTS）
                 if max_loops:
                     loop += 1
                     if loop >= max_loops:
@@ -765,6 +889,7 @@ class Orchestrator:
                 kind = seg.kind
             i = idxs[-1] + 1
             self._seg_i = i
+            self._maybe_autogen()   # 讲到一半：后台去生成下一稿（不阻塞播放）
             # 统计这套稿已经播过多少行（同一行只算一次）
             for k in idxs:
                 ln = self.segments[k].line_no
