@@ -221,6 +221,38 @@ def test_pause_and_resume_bump_playback_epoch(srv):
     mod.HUB.leave("xingge")
 
 
+def test_live_voice_switch_invalidates_old_audio(srv):
+    """直播中换音色：必须立刻生效，且旧音色的音频全部作废、播放端重定位。
+
+    翔哥报的现象是「点暂停后还有另外一个音色还在播放」，根因之一就是换音色后
+    浏览器里已经排好的旧音色块还继续播。服务端在这里既清缓存也递增播放代次。
+    """
+    c, mod, fake = srv
+    v1 = c.call("/api/voice_save", {"prefix": "oldv1", "prompt": PROMPT,
+                                    "target_model": "cosyvoice-v3.5-flash"})[1]["voice_id"]
+    v2 = c.call("/api/voice_save", {"prefix": "newv2", "prompt": PROMPT,
+                                    "target_model": "cosyvoice-v3.5-flash"})[1]["voice_id"]
+    assert c.call("/api/start", {"room": "444444", "text": "测试稿一句。", "voice_id": v1})[0] == 200
+    sess = mod.HUB.get("xingge")
+    orch = sess.orch
+    e0 = orch.snapshot()["playback_epoch"]
+
+    code, d = c.call("/api/voice_default", {"model": "cosyvoice-v3.5-flash", "voice": v2})
+    assert code == 200, d
+    s = orch.snapshot()
+    assert s["params"]["voice"] == v2, "在播的电台必须当场换成新音色"
+    assert s["playback_epoch"] > e0, "换音色必须递增代次，让前端清掉旧音色已排好的块"
+    assert not orch._tts_cache, "旧音色合成过的音频必须全部作废"
+    assert any("旧音色音频已全部作废" in x for x in s["log"])
+
+    # 跨模型搭配在直播中同样被拦（v2 的音色不能配 v3.5-flash）
+    code, d = c.call("/api/voice_default", {"model": "cosyvoice-v3.5-flash",
+                                            "voice": "cosyvoice-v2-vd-oldvoice-0000000000"})
+    assert code == 422 and "音色绑定" in d["error"]
+    assert orch.voice == v2, "被拦之后在播的音色不能被改坏"
+    mod.HUB.leave("xingge")
+
+
 # ---------------------------------------------------------------- 6 · 音色记录落在用户库
 def test_generated_voice_is_recorded_in_user_library(srv):
     c, mod, fake = srv

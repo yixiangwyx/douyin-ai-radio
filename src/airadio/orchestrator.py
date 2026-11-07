@@ -445,10 +445,11 @@ class Orchestrator:
         if rate is not None:
             self.speech_rate = min(2.0, max(0.5, float(rate)))
             rebuild = True
-        if rebuild and self.sink_name != "dry":
-            self.tts = TTSStreamer(api_key=self.api_key, model=self.model,
-                                   voice=self.voice, speech_rate=self.speech_rate,
-                                   on_audio=self._on_audio)
+        if rebuild:
+            if self.sink_name != "dry":
+                self.tts = TTSStreamer(api_key=self.api_key, model=self.model,
+                                       voice=self.voice, speech_rate=self.speech_rate,
+                                       on_audio=self._on_audio)
             # 换模型/音色/语速后旧音频一律不能用：清内存缓存，并让播放端重定位，
             # 否则浏览器里已经排好的块（旧音色）会继续播 —— 看起来就是"暂停了还有别的音色在播"
             with self._tts_lock:
