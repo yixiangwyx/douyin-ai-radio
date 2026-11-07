@@ -355,10 +355,12 @@ async function getState() {
 
 function render(s) {
   const st = $('status');
-  st.innerHTML = '房间 ' + esc(s.room.web_rid || '-') + ' · ' + esc(s.room.title || '') + ' — ' +
+  st.innerHTML = '房间 ' + esc(s.room.web_rid || '-') + ' · ' + esc(s.room.title || '') +
+    (s.room.audio_room ? ' <b class=warn>电台房</b>' : '') + ' — ' +
     (s.status.includes('connected') ? '<b class=ok>已连接</b>' :
      s.status.includes('live:') ? '<b class=warn>连接中…</b>' :
      s.status.includes('not_live') ? '<b class=warn>未开播(自动重试)</b>' :
+     s.status.includes('RoomBlocked') ? '<b class=warn>被抖音风控拦截(自动退避重试)</b>' :
      '<b class=err>' + esc(s.status) + '</b>') +
     (s.paused ? ' · <b class=warn>已暂停</b>' : '') +
     (s.tts_error ? ' · <b class=err>TTS: ' + esc(s.tts_error) + '</b>' : '');

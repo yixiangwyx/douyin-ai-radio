@@ -12,7 +12,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 
 import requests
 
@@ -24,6 +24,11 @@ from .sign import signature_for
 
 UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
+
+# 手机 UA：只有它请求 live.douyin.com/{直播间号} 才会 302 到 reflow/{room_id}?sec_user_id=...
+# （电脑 UA 拿到的是渲染好的 HTML，语音/电台房那份 HTML 里没有房间数据）
+MOBILE_UA = ("Mozilla/5.0 (Linux; Android 11; SAMSUNG SM-G973U) AppleWebKit/537.36 "
+             "(KHTML, like Gecko) SamsungBrowser/14.2 Chrome/87.0.4280.141 Mobile Safari/537.36")
 
 TYPE_MAP = {
     "WebcastChatMessage": ("chat", ChatMessage),
@@ -45,9 +50,15 @@ class RoomInfo:
     title: str = ""
     ttwid: str = ""
     logged_in: bool = False   # 带 sessionid_ss 等登录 Cookie ⇒ 才会收到礼物消息
+    audio_room: bool = False  # 语音/电台房（手机开播）：电脑端页面不渲染房间数据
+    source: str = ""          # 拿到 room_id 的途径，排查用: page / enter / reflow
 
 
 LOGIN_COOKIE_KEYS = ("sessionid_ss", "sessionid", "sid_tt")
+
+
+class RoomBlockedError(RuntimeError):
+    """抖音风控/验证页：请求被拦，拿不到房间数据（和"没开播"是两回事，别混淆）。"""
 
 
 def cookie_has_login(cookie: str) -> bool:
@@ -65,41 +76,170 @@ def _session(login_cookie: str = "") -> requests.Session:
     return s
 
 
+def _anchor_sec_uid(page_html: str) -> str:
+    """直播间页 HTML 里主播的 sec_uid（语音/电台房只能靠它去问房间数据）。"""
+    m = re.search(r'(MS4wLjABAAAA[A-Za-z0-9_\-]{10,})', page_html)
+    return m.group(1) if m else ""
+
+
+def _profile_current_room(s, sec_uid: str) -> str:
+    """网页版用户资料接口：返回该主播**当前**房间 id（room_id / live_status）。
+
+    有些电台房（手机开播）连手机 UA 都不重定向（直接给 HTML，且 HTML 里
+    roomStore.roomInfo 是空的、没有任何 room_id），这条接口照样给房间号，
+    而且不需要 a_bogus/msToken 签名（实测：27589728361 → 7705293012108151567）。
+    不在播时 room_id=0。
+    """
+    if not sec_uid:
+        return ""
+    params = {"device_platform": "webapp", "aid": "6383", "channel": "channel_pc_web",
+              "sec_user_id": sec_uid, "publish_video_strategy_type": "2",
+              "pc_client_type": "1", "version_code": "170400", "version_name": "17.4.0"}
+    try:
+        r = s.get("https://www.douyin.com/aweme/v1/web/user/profile/other/?"
+                  + urlencode(params), timeout=15)
+        user = (r.json() or {}).get("user") or {}
+    except Exception:
+        return ""
+    rid = str(user.get("room_id") or "")
+    return rid if re.fullmatch(r"\d{15,20}", rid) else ""
+
+
+def _room_redirect(s, web_rid: str) -> tuple[str, str]:
+    """手机 UA 请求 live.douyin.com/{web_rid} 会 302 到
+    webcast.amemv.com/douyin/webcast/reflow/{room_id}?sec_user_id=...
+
+    这条重定向对手机开播的语音/电台房同样有效，且给的是该直播间号**当前/最近**那一间房，
+    所以它比读电脑端页面更可靠（实测：电台房 94005035096 → reflow/7705239387273038655）。
+    返回 (room_id, sec_user_id)，拿不到就返回 ("", "")。
+    """
+    try:
+        r = s.get(f"https://live.douyin.com/{web_rid}",
+                  headers={"User-Agent": MOBILE_UA}, allow_redirects=False, timeout=15)
+        loc = r.headers.get("Location", "") or ""
+        mm = re.search(r"reflow/(\d{15,20})", loc)
+        if mm:
+            sm = re.search(r"sec_user_id=([\w_\-]+)", loc)
+            return mm.group(1), (sm.group(1) if sm else "")
+        if r.status == 200 and "验证码中间页" in r.content.decode("utf-8", "ignore")[:4000]:
+            raise RoomBlockedError("抖音返回验证码中间页（请求太频繁被风控），稍后再试或带登录 Cookie")
+    except RoomBlockedError:
+        raise
+    except Exception:
+        pass
+    return "", ""
+
+
+def _reflow_room_info(s, room_id: str, sec_user_id: str = "") -> dict | None:
+    """app 端 reflow/info：房间权威数据。
+
+    返回 data.room：status(2=在播, 4=已结束)、title、live_type_audio（语音/电台房标记）、
+    user_count、create_time/finish_time。主播不在播时对着旧房间号也是 status=4，
+    因此能准确区分"真没开播"和"接口取不到数据"。
+    """
+    if not room_id:
+        return None
+    params = {"type_id": "0", "live_id": "1", "room_id": room_id,
+              "version_code": "99.99.99", "app_id": "1128", "device_platform": "webcast"}
+    if sec_user_id:
+        params["sec_user_id"] = sec_user_id
+    try:
+        r = s.get("https://webcast.amemv.com/webcast/room/reflow/info/?"
+                  + urlencode(params), timeout=15)
+        data = (r.json() or {}).get("data") or {}
+    except Exception:
+        return None
+    room = data.get("room")
+    return room if isinstance(room, dict) and room.get("id_str") else None
+
+
+def _page_room_id(html: str) -> str | None:
+    """直播间页 SSR 里的真实 room_id（19 位）。
+
+    页面有两种渲染写法：普通 JSON `\"roomId\":\"770...\"` 与转义 JSON
+    `roomId\\\":\\"770...\\"`，所以只匹配 roomId 到数字之间的分隔符，不去数反斜杠。
+    """
+    for pat in (r'roomId["\\:\s]{0,8}(\d{15,20})',
+                r'room_id["\\:\s]{0,8}(\d{15,20})',
+                r'reflow/(\d{15,20})'):
+        mm = re.search(pat, html)
+        if mm:
+            return mm.group(1)
+    return None
+
+
 def resolve_room(web_rid: str, login_cookie: str = "") -> RoomInfo:
-    """输入抖音直播间号（live.douyin.com/后的数字）或直播间 URL。"""
+    """输入抖音直播间号（live.douyin.com/后的数字）或直播间 URL。
+
+    手机开播的语音/电台房（抖音"电台"直播）在电脑端是拿不到房间数据的：
+    页面显示"该直播类型或玩法电脑端暂未支持"，SSR 里 roomStore.roomInfo 是空的，
+    web/enter 接口也不给房间 —— 老逻辑因此永远解析不到 room_id，控制台一直显示"未开播"。
+
+    可用的两条路（都实测过）：
+    1) 手机 UA 请求 live.douyin.com/{直播间号} → 302 到 webcast.amemv.com/douyin/webcast/
+       reflow/{room_id}?sec_user_id=...   语音房也照常重定向，且给的就是当前那一间房；
+    2) webcast/room/reflow/info/?room_id=... → 权威房间数据：status(2=在播/4=已结束)、
+       title、live_type_audio、在线人数。
+    status 一律以 (2) 为准：只读页面会把"上一场已结束的房间"当成在播，误报开播。
+    """
     m = re.search(r"(\d{5,20})", web_rid)
     if not m:
         raise ValueError(f"无法从 {web_rid!r} 解析直播间号（请输入 live.douyin.com/数字 或纯数字）")
     rid = m.group(1)
     s = _session(login_cookie)
-    r = s.get(f"https://live.douyin.com/{rid}", timeout=15)
-    # SSR 页面里找真实 room_id（两种渲染格式：普通 JSON 与转义 JSON）
-    room_id = None
-    for pat in (r'\\"roomId\\":\\"(\d{15,20})',   # 转义 JSON（当前 SSR 格式）
-                r'"roomId":"(\d{15,20})"',
-                r'"room_id":"(\d{15,20})"',
-                r'reflow/(\d{15,20})'):
-        mm = re.search(pat, r.text)
-        if mm:
-            room_id = mm.group(1)
-            break
-    status = 2 if room_id else 0
-    mm = re.search(r'"status":(\d+)', r.text)
-    if mm:
-        status = int(mm.group(1))
+
+    room_id, sec_user_id = _room_redirect(s, rid)
+    source = "redirect" if room_id else ""
+
+    page_html = ""
     title = ""
-    mt = re.search(r'<title>([^<]+)</title>', r.text)
-    if mt:
-        title = mt.group(1)[:80]
+    audio_room = False
+    if not room_id:
+        # 重定向没给房间（未开播、该号不是直播间号、或这类电台房连手机 UA 都不重定向）
+        # 才读电脑端页面：取主播 sec_uid 走下面那条资料接口
+        try:
+            pr = s.get(f"https://live.douyin.com/{rid}", timeout=15)
+            # 不指定 charset 时 requests 会按 latin-1 解，中文标题变乱码，风控文案也匹配不上
+            pr.encoding = "utf-8"
+            page_html = pr.text
+        except Exception:
+            pass
+        if "验证码中间页" in page_html[:4000]:
+            # 轮询太密会被风控拦住，返回的是验证页：既不是没开播，也拿不到房间数据
+            raise RoomBlockedError("抖音返回验证码中间页（请求太频繁被风控），稍后再试或带登录 Cookie")
+        room_id = _page_room_id(page_html) or ""
+        source = "page" if room_id else ""
+        if not sec_user_id:
+            sec_user_id = _anchor_sec_uid(page_html)
+        audio_room = "暂未支持" in page_html
+        mt = re.search(r'<title>([^<]+)</title>', page_html)
+        if mt:
+            title = mt.group(1)[:80]
+    status = 2 if room_id else 0
+
+    if not room_id and sec_user_id:
+        # 主播资料接口：有些手机开播的电台房只有这条能给房间号
+        room_id = _profile_current_room(s, sec_user_id)
+        source = "profile" if room_id else ""
+
+    room = _reflow_room_info(s, room_id, sec_user_id)
+    if room:
+        room_id = str(room["id_str"])
+        status = int(room.get("status") or 0)
+        audio_room = bool(room.get("live_type_audio")) or audio_room
+        if room.get("title"):
+            title = str(room["title"])[:80]
+        source = "reflow"
     if not room_id:
         # 未开播：把 web_rid 当占位 room_id，由上层轮询重试
         room_id = rid
+        status = 0
     ttwid = s.cookies.get("ttwid", "")
     if not ttwid and login_cookie:
         m = re.search(r"ttwid=([^;]+)", login_cookie)
         ttwid = m.group(1) if m else ""
     return RoomInfo(web_rid=rid, room_id=room_id, status=status,
-                    title=title, ttwid=ttwid,
+                    title=title, ttwid=ttwid, audio_room=audio_room, source=source,
                     logged_in=cookie_has_login(login_cookie) or
                     any(c.name in LOGIN_COOKIE_KEYS for c in s.cookies))
 
@@ -188,7 +328,8 @@ class LiveCollector:
             except Exception as e:
                 self.last_error = f"{type(e).__name__}: {e}"
                 self.on_status(f"error:{self.last_error}")
-                self._stop.wait(15)
+                # 风控/验证页要退避久一点，不然越查越被拦
+                self._stop.wait(60 if isinstance(e, RoomBlockedError) else 15)
 
     async def _ws_loop(self, url: str):
         import websockets

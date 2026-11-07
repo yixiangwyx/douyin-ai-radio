@@ -428,6 +428,9 @@ class Orchestrator:
                 "room_id": room.room_id if room else "",
                 "title": room.title if room else "",
                 "live": bool(room and room.status == 2),
+                # 电台/语音房（手机开播）：电脑端页面拿不到房间数据，采集走 app 端接口
+                "audio_room": bool(room and room.audio_room),
+                "source": room.source if room else "",
             },
             "paused": self.paused,
             # 播放代次：跳句/从头重播/换稿都会 +1；前端据此清掉已排好的音频队列，
